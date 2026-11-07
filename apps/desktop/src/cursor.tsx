@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
-import { ask, reset, type Shot, stop } from "./agent";
+import { ask, type Plan, reset, type Shot, stop } from "./agent";
 import pointer from "./assets/cursor.png";
 
 type Spot = { x: number; y: number };
@@ -88,6 +88,14 @@ async function isMouseNear(bubble: HTMLElement, margin: number) {
   );
 }
 
+// Says which step of a task is under way, counting from the first one left,
+// so a person can see how far along they are.
+function progress({ steps, remaining }: Plan) {
+  if (!remaining) return "";
+
+  return `Step ${steps.length - remaining + 1} of ${steps.length}`;
+}
+
 // Places the bubble along one axis, measured from the cursor's tip, so that
 // mirroring both shapes near a screen edge keeps them nested together.
 function offset(origin: number, tip: number, size: number, mirrored: boolean) {
@@ -113,6 +121,7 @@ export function Cursor() {
   const [leaving, setLeaving] = useState(false);
   const [shy, setShy] = useState(false);
   const [size, setSize] = useState<Size>();
+  const [step, setStep] = useState("");
 
   useEffect(() => {
     const overlay = getCurrentWindow();
@@ -231,6 +240,10 @@ export function Cursor() {
 
             setSpeech(text);
           },
+
+          onPlan: (plan) => {
+            if (isCurrent()) setStep(progress(plan));
+          },
         });
 
         if (isCurrent()) linger(reply);
@@ -296,6 +309,7 @@ export function Cursor() {
     const forgetting = listen("forget", () => {
       turn.current += 1;
       busy.current = false;
+      setStep("");
       reset();
     });
 
@@ -330,7 +344,7 @@ export function Cursor() {
     setSize(
       box ? { width: box.offsetWidth, height: box.offsetHeight } : undefined,
     );
-  }, [speech]);
+  }, [speech, step]);
 
   if (!spot) return null;
 
@@ -390,6 +404,7 @@ export function Cursor() {
               top: offset(BUBBLE_ORIGIN, TIP.y, height, flipY),
             }}
           >
+            {step && <div className="step">{step}</div>}
             {speech}
           </div>
         </div>

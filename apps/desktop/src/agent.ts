@@ -13,20 +13,22 @@ export type Shot = { generation: number; picture: Picture | null };
 // A spot on the picture, as parts of its width and height.
 export type Spot = { x: number; y: number };
 
+// The steps of a task, and how many are not done yet.
+export type Plan = {
+  steps: { title: string; done: boolean }[];
+  remaining: number;
+};
+
 type Pointer = Spot & { say: string };
 
 type Listeners = {
   onPoint: (spot: Spot) => void;
   onText: (text: string) => void;
+  onPlan: (plan: Plan) => void;
 };
 
 let session: Promise<ClientSession> | undefined;
 let sending: Promise<unknown> | undefined;
-
-// Tells a pointing result apart from any other tool output on the stream,
-// which reports every call in the same shape.
-const isPointer = (output: unknown): output is Pointer =>
-  typeof output === "object" && output !== null && "say" in output;
 
 // Removes the markdown models sometimes add anyway, because the bubble shows
 // plain text and stray symbols would read as noise.
@@ -100,34 +102,64 @@ async function send(message: string, picture: Picture | null) {
 export async function ask(
   message: string,
   picture: Picture | null,
-  { onPoint, onText }: Listeners,
+  { onPoint, onText, onPlan }: Listeners,
 ) {
   const sent = send(message, picture);
 
   sending = sent;
 
   const delivery = await sent;
+  const tools = new Map<string, string>();
+  const texts = new Set<string>();
   let text = "";
 
+  // Shows whatever was said last, since a step that also calls a tool marks
+  // its words as narration even though they are all this bubble has.
+  const say = (words: string) => {
+    text = words;
+    onText(plain(text));
+  };
+
   for await (const event of delivery.stream()) {
-    if (event.type === "content.delta" && event.data.kind === "text") {
-      text += event.data.delta;
-      onText(plain(text));
-    }
+    switch (event.type) {
+      case "content.delta": {
+        const { partId, kind, delta } = event.data;
 
-    if (event.type === "content.completed" && event.data.kind === "text") {
-      text = String(event.data.value);
-      onText(plain(text));
-    }
+        // Each new part of text is said on its own, not after the last one.
+        if (kind === "text" && !texts.has(partId)) {
+          texts.add(partId);
+          text = "";
+        }
 
-    if (event.type === "call.settled" && isPointer(event.data.output)) {
-      const { x, y, say } = event.data.output;
+        if (texts.has(partId)) say(text + delta);
+        break;
+      }
 
-      onPoint({ x, y });
+      case "content.completed": {
+        if (event.data.kind === "text") say(String(event.data.value ?? ""));
+        break;
+      }
 
-      if (say) {
-        text = say;
-        onText(plain(text));
+      case "call.requested": {
+        tools.set(event.data.callId, event.data.capability.name);
+        break;
+      }
+
+      case "call.settled": {
+        const { callId, outcome, output } = event.data;
+
+        if (outcome !== "completed") break;
+
+        if (tools.get(callId) === "point_at") {
+          const { x, y, say: words } = output as Pointer;
+
+          onPoint({ x, y });
+          if (words) say(words);
+        }
+
+        if (tools.get(callId) === "plan") onPlan(output as Plan);
+
+        break;
       }
     }
   }
