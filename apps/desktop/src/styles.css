@@ -1,7 +1,14 @@
 :root {
-  color-scheme: light dark;
+  --blue: #2563eb;
+  --blue-deep: #1d4ed8;
+  --blue-soft: #dbe8ff;
+  --ink: #12305c;
+  --muted: #6b84a8;
+  --shadow: #1e3a8a33;
+
+  color-scheme: light;
   font:
-    14px/1.4 -apple-system,
+    500 14px/1.45 -apple-system,
     "Segoe UI",
     sans-serif;
 }
@@ -16,85 +23,129 @@ body,
 }
 
 .panel {
-  display: flex;
-  align-items: center;
   box-sizing: border-box;
   height: 100%;
-  padding: 0 16px;
-  border-radius: 14px;
-  color: light-dark(#111, #f4f4f4);
-  background: light-dark(#fff, #1c1c1e);
+  padding: 8px;
 }
 
 .panel input {
   all: unset;
+  box-sizing: border-box;
   width: 100%;
+  height: 100%;
+  padding: 0 16px;
+  border: 1.5px solid var(--blue-soft);
+  border-radius: 16px;
+  color: var(--ink);
+  caret-color: var(--blue);
+  background: #fff;
+  box-shadow: 0 4px 14px var(--shadow);
 }
 
-.cursor {
+.panel input::placeholder {
+  color: var(--muted);
+}
+
+.scene {
+  position: fixed;
+  inset: 0;
+  transition: opacity 350ms ease;
+  animation: float 4s ease-in-out infinite;
+}
+
+.scene.leaving {
+  opacity: 0;
+}
+
+.glide-x,
+.glide-y,
+.anchor {
   position: fixed;
   top: 0;
   left: 0;
 }
 
-.cursor.gliding {
-  transition: transform 450ms cubic-bezier(0.22, 1, 0.36, 1);
+.gliding,
+.gliding .glide-y {
+  transition: transform 750ms cubic-bezier(0.3, 0.8, 0.3, 1);
 }
 
-.cursor svg {
-  fill: #0a84ff;
-  stroke: #fff;
-  stroke-width: 1.5;
-  filter: drop-shadow(0 1px 3px #0006);
+.gliding .glide-y {
+  transition-timing-function: cubic-bezier(0.7, 0, 0.3, 1);
+}
+
+.anchor.gliding {
+  transition: transform 1100ms cubic-bezier(0.34, 1.4, 0.5, 1);
+}
+
+.mirror {
+  position: absolute;
+}
+
+.pointer {
+  display: block;
+  filter: drop-shadow(0 1px 2px var(--shadow));
+}
+
+.pointer.thinking {
+  animation: wiggle 800ms ease-in-out infinite;
 }
 
 .bubble {
   position: absolute;
-  top: 24px;
-  left: 28px;
   box-sizing: border-box;
   width: max-content;
-  max-width: 300px;
-  padding: 8px 12px;
-  border-radius: 14px;
+  max-width: 220px;
+  padding: 6px 11px;
+  border-radius: 4px 14px 14px;
   color: #fff;
-  background: #0a84ff;
+  font-size: 13px;
+  line-height: 1.35;
+  background: #2563ebeb;
+  box-shadow: 0 3px 12px var(--shadow);
+  transition: opacity 180ms ease;
+  animation: appear 320ms cubic-bezier(0.34, 1.56, 0.64, 1) backwards;
+}
+
+.bubble.measuring {
+  visibility: hidden;
 }
 
 .bubble.flip-x {
-  right: 28px;
-  left: auto;
+  border-radius: 14px 4px 14px 14px;
 }
 
 .bubble.flip-y {
-  top: auto;
-  bottom: 12px;
+  border-radius: 14px 14px 14px 4px;
 }
 
-.dots {
-  display: flex;
-  gap: 4px;
-  padding: 6px 2px;
+.bubble.flip-x.flip-y {
+  border-radius: 14px 14px 4px;
 }
 
-.dots i {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #fff;
-  animation: blink 1s infinite;
+.bubble.shy {
+  opacity: 0.12;
 }
 
-.dots i:nth-child(2) {
-  animation-delay: 150ms;
+@keyframes wiggle {
+  25% {
+    transform: rotate(-9deg);
+  }
+
+  75% {
+    transform: rotate(9deg);
+  }
 }
 
-.dots i:nth-child(3) {
-  animation-delay: 300ms;
-}
-
-@keyframes blink {
+@keyframes float {
   50% {
-    opacity: 0.3;
+    transform: translateY(-2.5px);
+  }
+}
+
+@keyframes appear {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.92);
   }
 }
