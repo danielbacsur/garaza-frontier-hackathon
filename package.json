@@ -1,5 +1,24 @@
 {
   "name": "computer-use-with-decisions",
   "version": "0.0.0",
-  "private": true
+  "private": true,
+
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "typecheck": "turbo run typecheck"
+  },
+
+  "devDependencies": {
+    "turbo": "^2"
+  },
+
+  "devEngines": {
+    "packageManager": {
+      "name": "npm",
+      "version": "^11"
+    }
+  },
+
+  "workspaces": ["apps/*", "agents/*"]
 }
