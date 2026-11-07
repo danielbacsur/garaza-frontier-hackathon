@@ -25,10 +25,42 @@ body,
   padding: 12px;
   border-radius: 14px;
   color: light-dark(#111, #f4f4f4);
-  background: light-dark(#fffffff2, #1c1c1ef2);
+  background: light-dark(#fff, #1c1c1e);
 }
 
 .panel input {
   all: unset;
   width: 100%;
+}
+
+.panel p {
+  flex: 1;
+  margin: 0;
+  overflow-y: auto;
+}
+
+.cursor {
+  position: fixed;
+  top: 0;
+  left: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  transition: transform 450ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.cursor svg {
+  fill: #0a84ff;
+  stroke: #fff;
+  stroke-width: 1.5;
+  filter: drop-shadow(0 1px 3px #0006);
+}
+
+.cursor span {
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: #fff;
+  background: #0a84ff;
+  font-weight: 500;
+  white-space: nowrap;
 }
