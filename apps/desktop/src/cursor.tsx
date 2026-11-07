@@ -1,6 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
+import {
+  cursorPosition,
+  getCurrentWindow,
+  primaryMonitor,
+} from "@tauri-apps/api/window";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { AUTOMATIC, ask, type Plan, reset, type Shot, stop } from "./agent";
@@ -45,6 +49,15 @@ async function toOverlay({ x, y }: Spot): Promise<Spot> {
   return { x: x - origin.x, y: y - origin.y };
 }
 
+// Reads where the mouse is in points; tauri reports it in pixels of the main
+// display whichever display it is on, so that scale is the one to undo.
+async function mouseInPoints(): Promise<Spot> {
+  const scale = (await primaryMonitor())?.scaleFactor ?? 1;
+  const { x, y } = await cursorPosition();
+
+  return { x: x / scale, y: y / scale };
+}
+
 // Checks whether the bubble fits to the right of a spot, keeping the room
 // the cursor needs too, the one rule for where the bubble may sit.
 function fitsRight(x: number) {
@@ -74,7 +87,7 @@ function beside({ x, y }: Spot): Spot {
 async function isMouseNear(bubble: HTMLElement, margin: number) {
   const overlay = getCurrentWindow();
   const scale = await overlay.scaleFactor();
-  const mouse = (await cursorPosition()).toLogical(scale);
+  const mouse = await mouseInPoints();
   const origin = (await overlay.outerPosition()).toLogical(scale);
   const box = bubble.getBoundingClientRect();
   const x = mouse.x - origin.x;
@@ -316,11 +329,8 @@ export function Cursor() {
       guiding.current = false;
 
       if (resting.current) {
-        const scale = await overlay.scaleFactor();
-        const { x, y } = (await cursorPosition()).toLogical(scale);
-
         resting.current = false;
-        put(beside(await toOverlay({ x, y })));
+        put(beside(await toOverlay(await mouseInPoints())));
       }
 
       void run(AUTOMATIC, true);

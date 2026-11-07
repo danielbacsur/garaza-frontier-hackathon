@@ -11,8 +11,8 @@ use capture::Picture;
 use serde::Serialize;
 
 use tauri::{
-    AppHandle, Emitter, LogicalPosition, Manager, Monitor, PhysicalPosition,
-    State, WebviewWindow,
+    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, State,
+    WebviewWindow,
 };
 
 use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutState};
@@ -54,39 +54,68 @@ struct Request {
     question: String,
 }
 
-// Finds the monitor under the real cursor, comparing physical pixels because
-// that is the unit the mouse position arrives in.
-fn monitor_under(
+// A display's area on screen in points, the unit every position here uses,
+// since displays side by side can each have a scale of their own.
+#[derive(Clone, Copy)]
+struct Display {
+    origin: LogicalPosition<f64>,
+    size: LogicalSize<f64>,
+}
+
+impl Display {
+    // Checks whether a spot in points lies on this display, which is all
+    // that following the mouse needs to know most of the time.
+    fn holds(&self, (x, y): (f64, f64)) -> bool {
+        x >= self.origin.x
+            && y >= self.origin.y
+            && x < self.origin.x + self.size.width
+            && y < self.origin.y + self.size.height
+    }
+}
+
+// Reads where the mouse is in points; tauri reports it in pixels of the main
+// display whichever display it is on, so that scale is the one to undo.
+fn mouse_points(window: &WebviewWindow) -> tauri::Result<(f64, f64)> {
+    let mouse = window.cursor_position()?;
+    let main = window.primary_monitor()?;
+    let scale = main.map_or(1.0, |monitor| monitor.scale_factor());
+
+    Ok((mouse.x / scale, mouse.y / scale))
+}
+
+// Finds the display holding a spot in points, measuring each display by its
+// own scale, so a retina screen beside an ordinary one is handled right.
+fn display_at(
     window: &WebviewWindow,
-    mouse: PhysicalPosition<f64>,
-) -> tauri::Result<Option<Monitor>> {
-    let monitor = window.available_monitors()?.into_iter().find(|monitor| {
-        let origin = monitor.position();
-        let size = monitor.size();
+    spot: (f64, f64),
+) -> tauri::Result<Option<Display>> {
+    let mut displays =
+        window.available_monitors()?.into_iter().map(|monitor| {
+            let scale = monitor.scale_factor();
 
-        mouse.x >= origin.x as f64
-            && mouse.y >= origin.y as f64
-            && mouse.x < origin.x as f64 + size.width as f64
-            && mouse.y < origin.y as f64 + size.height as f64
-    });
+            Display {
+                origin: monitor.position().to_logical(scale),
+                size: monitor.size().to_logical(scale),
+            }
+        });
 
-    Ok(monitor)
+    Ok(displays.find(|display| display.holds(spot)))
 }
 
 // Sits the prompt beside the real cursor, and flips it to the other side
 // near a screen edge so that it never slides out of view.
 fn place_panel(panel: &WebviewWindow) -> tauri::Result<()> {
-    let mouse = panel.cursor_position()?;
+    let (x, y) = mouse_points(panel)?;
 
-    let Some(monitor) = monitor_under(panel, mouse)? else {
+    let Some(Display {
+        origin,
+        size: screen,
+    }) = display_at(panel, (x, y))?
+    else {
         return Ok(());
     };
 
-    let scale = monitor.scale_factor();
-    let origin = monitor.position().to_logical::<f64>(scale);
-    let screen = monitor.size().to_logical::<f64>(scale);
-    let size = panel.outer_size()?.to_logical::<f64>(scale);
-    let (x, y) = (mouse.x / scale, mouse.y / scale);
+    let size = panel.outer_size()?.to_logical::<f64>(panel.scale_factor()?);
 
     let left = if x + PANEL_GAP + size.width > origin.x + screen.width {
         x - PANEL_GAP - size.width
@@ -115,15 +144,15 @@ fn follow_cursor(app: AppHandle) {
     loop {
         thread::sleep(FOLLOW_INTERVAL);
 
-        let Ok(mouse) = panel.cursor_position() else {
+        let Ok(mouse) = mouse_points(&panel) else {
             continue;
         };
 
-        let moved = (mouse.x, mouse.y) != last;
+        let moved = mouse != last;
         let was_pointed = pointed;
 
         pointed = app.state::<Pointing>().0.load(Ordering::Relaxed);
-        last = (mouse.x, mouse.y);
+        last = mouse;
 
         if moved && panel.is_visible().unwrap_or(false) {
             let _ = place_panel(&panel);
@@ -140,67 +169,23 @@ fn follow_cursor(app: AppHandle) {
     }
 }
 
-// The display the overlay currently covers, kept so that following the mouse
-// costs no lookups until the mouse leaves it.
-#[derive(Clone, Copy)]
-struct Covered {
-    origin: PhysicalPosition<f64>,
-    size: (f64, f64),
-    scale: f64,
-}
-
-impl Covered {
-    // Checks whether the mouse is still on this display, which is all that
-    // following it needs to know most of the time.
-    fn holds(&self, mouse: PhysicalPosition<f64>) -> bool {
-        mouse.x >= self.origin.x
-            && mouse.y >= self.origin.y
-            && mouse.x < self.origin.x + self.size.0
-            && mouse.y < self.origin.y + self.size.1
-    }
-}
-
-// Spreads the overlay over the display under the mouse and notes which one
-// it is, so the next moves on the same display need no lookups.
-fn cover(
-    cursor: &WebviewWindow,
-    mouse: PhysicalPosition<f64>,
-) -> tauri::Result<Option<Covered>> {
-    let Some(monitor) = monitor_under(cursor, mouse)? else {
-        return Ok(None);
-    };
-
-    let scale = monitor.scale_factor();
-    let origin = monitor.position();
-    let size = monitor.size();
-
-    cover_monitor(cursor, mouse.x / scale, mouse.y / scale)?;
-
-    Ok(Some(Covered {
-        origin: PhysicalPosition::new(origin.x as f64, origin.y as f64),
-        size: (size.width as f64, size.height as f64),
-        scale,
-    }))
-}
-
 // Tells the second cursor where the mouse is, in screen points like every
-// other position it is given, so it can stay just beside it.
+// other position it is given, moving the overlay when it changes display.
 fn share_mouse(
     app: &AppHandle,
     cursor: &WebviewWindow,
-    mouse: PhysicalPosition<f64>,
-    covered: &mut Option<Covered>,
+    mouse: (f64, f64),
+    covered: &mut Option<Display>,
 ) -> tauri::Result<()> {
     if !covered.is_some_and(|display| display.holds(mouse)) {
-        *covered = cover(cursor, mouse)?;
+        *covered = cover_display(cursor, mouse)?;
     }
 
-    let Some(display) = *covered else {
+    if covered.is_none() {
         return Ok(());
-    };
+    }
 
-    let x = mouse.x / display.scale;
-    let y = mouse.y / display.scale;
+    let (x, y) = mouse;
 
     app.emit_to("cursor", "mouse", Spot { x, y })
 }
@@ -297,26 +282,20 @@ fn report(message: String) {
     journal::event(&format!("window error: {message}"));
 }
 
-// Stretches the overlay over the monitor under the target, so that one
-// window can serve every display the cursor needs to reach.
-fn cover_monitor(cursor: &WebviewWindow, x: f64, y: f64) -> tauri::Result<()> {
-    for monitor in cursor.available_monitors()? {
-        let scale = monitor.scale_factor();
-        let origin = monitor.position().to_logical::<f64>(scale);
-        let size = monitor.size().to_logical::<f64>(scale);
+// Stretches the overlay over the display holding a spot, so that one window
+// can serve every display the cursor needs to reach.
+fn cover_display(
+    cursor: &WebviewWindow,
+    spot: (f64, f64),
+) -> tauri::Result<Option<Display>> {
+    let display = display_at(cursor, spot)?;
 
-        if x >= origin.x
-            && y >= origin.y
-            && x < origin.x + size.width
-            && y < origin.y + size.height
-        {
-            cursor.set_position(origin)?;
-            cursor.set_size(size)?;
-            break;
-        }
+    if let Some(Display { origin, size }) = display {
+        cursor.set_position(origin)?;
+        cursor.set_size(size)?;
     }
 
-    Ok(())
+    Ok(display)
 }
 
 // Shows the second cursor beside the real one and hands it the question, so
@@ -325,7 +304,7 @@ fn cover_monitor(cursor: &WebviewWindow, x: f64, y: f64) -> tauri::Result<()> {
 fn think(app: AppHandle, question: String) -> tauri::Result<()> {
     let panel = app.get_webview_window("panel").expect("panel window");
     let cursor = app.get_webview_window("cursor").expect("cursor window");
-    let mouse = cursor.cursor_position()?;
+    let (x, y) = mouse_points(&cursor)?;
 
     panel.hide()?;
     return_focus(&app);
@@ -333,15 +312,11 @@ fn think(app: AppHandle, question: String) -> tauri::Result<()> {
     // A new question starts beside the mouse, not on the last spot.
     app.state::<Pointing>().0.store(false, Ordering::Relaxed);
 
-    let Some(monitor) = monitor_under(&cursor, mouse)? else {
-        journal::event("think: no monitor under the mouse");
+    if cover_display(&cursor, (x, y))?.is_none() {
+        journal::event("think: no display under the mouse");
         return Ok(());
-    };
+    }
 
-    let scale = monitor.scale_factor();
-    let (x, y) = (mouse.x / scale, mouse.y / scale);
-
-    cover_monitor(&cursor, x, y)?;
     cursor.show()?;
     app.emit_to("cursor", "think", Request { x, y, question })
 }
@@ -377,7 +352,7 @@ fn point(
 
     let cursor = app.get_webview_window("cursor").expect("cursor window");
 
-    cover_monitor(&cursor, x, y)?;
+    cover_display(&cursor, (x, y))?;
     app.emit_to("cursor", "point", Spot { x, y })
 }
 
