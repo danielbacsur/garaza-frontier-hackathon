@@ -34,6 +34,7 @@ type Listeners = {
   onPoint: (spot: Spot) => void;
   onText: (text: string) => void;
   onPlan: (plan: Plan) => void;
+  onRestart: () => void;
 };
 
 let session: Promise<ClientSession> | undefined;
@@ -90,8 +91,12 @@ async function deliver(message: string, picture: Picture | null) {
 }
 
 // Sends a message, and starts over once if the agent no longer knows the
-// conversation, for example after it restarted.
-async function send(message: string, picture: Picture | null) {
+// conversation, for example after it restarted, saying so to the caller.
+async function send(
+  message: string,
+  picture: Picture | null,
+  onRestart: () => void,
+) {
   const opened = session;
 
   try {
@@ -101,6 +106,7 @@ async function send(message: string, picture: Picture | null) {
     if (!SessionNotActiveError.is(error) || session !== opened) throw error;
 
     session = undefined;
+    onRestart();
 
     return deliver(message, picture);
   }
@@ -111,9 +117,9 @@ async function send(message: string, picture: Picture | null) {
 export async function ask(
   message: string,
   picture: Picture | null,
-  { onPoint, onText, onPlan }: Listeners,
+  { onPoint, onText, onPlan, onRestart }: Listeners,
 ) {
-  const sent = send(message, picture);
+  const sent = send(message, picture, onRestart);
 
   sending = sent;
 

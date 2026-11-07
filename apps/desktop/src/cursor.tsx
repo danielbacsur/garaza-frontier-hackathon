@@ -276,11 +276,20 @@ export function Cursor() {
         if (!isCurrent()) return;
 
         const reply = await ask(message, picture, {
-          onPoint: ({ x, y }) => {
+          onPoint: async ({ x, y }) => {
             if (!isCurrent()) return;
 
+            // Counted at once, since the words follow straight after, and
+            // taken back if the spot was on a picture that is out of date.
             pointed = true;
-            void invoke("point", { x, y, generation });
+
+            const used = await invoke<boolean>("point", {
+              x,
+              y,
+              generation,
+            });
+
+            if (!used) pointed = false;
           },
 
           onText: (text) => {
@@ -295,6 +304,14 @@ export function Cursor() {
 
             said.current = text;
             setSpeech(text);
+          },
+
+          // The agent forgot the conversation, and with it any task.
+          onRestart: () => {
+            if (!isCurrent()) return;
+
+            plan.current = undefined;
+            setStep("");
           },
 
           onPlan: (next) => {

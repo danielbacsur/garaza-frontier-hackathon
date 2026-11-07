@@ -333,7 +333,8 @@ fn think(app: AppHandle, question: String) -> tauri::Result<()> {
 }
 
 // Moves the second cursor to the spot the agent picked on the picture, given
-// as parts of its width and height, ignoring spots on any older picture.
+// as parts of its width and height, and reports whether it was used, since
+// a spot on an older picture is ignored.
 #[tauri::command]
 fn point(
     app: AppHandle,
@@ -341,7 +342,7 @@ fn point(
     x: f64,
     y: f64,
     generation: u64,
-) -> tauri::Result<()> {
+) -> tauri::Result<bool> {
     let spot = {
         let shot = state.0.lock().expect("screen lock");
 
@@ -355,7 +356,7 @@ fn point(
         journal::event(&format!(
             "point: refused {x:.3},{y:.3} on {generation}"
         ));
-        return Ok(());
+        return Ok(false);
     };
 
     journal::event(&format!("point: {x:.0},{y:.0}"));
@@ -364,7 +365,9 @@ fn point(
     let cursor = app.get_webview_window("cursor").expect("cursor window");
 
     cover_display(&cursor, (x, y))?;
-    app.emit_to("cursor", "point", Spot { x, y })
+    app.emit_to("cursor", "point", Spot { x, y })?;
+
+    Ok(true)
 }
 
 // Puts the second cursor away once it has had its say, leaving the prompt
