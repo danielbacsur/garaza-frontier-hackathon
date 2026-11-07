@@ -1,17 +1,22 @@
 mod elements;
 
 use std::sync::Mutex;
+use std::thread;
+use std::time::Duration;
 
 use elements::Element;
 use serde::Serialize;
 
 use tauri::{
-    AppHandle, Emitter, LogicalPosition, Manager, State, WebviewWindow,
+    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, State,
+    WebviewWindow,
 };
 
 use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutState};
 
-const PANEL_MARGIN: f64 = 24.0;
+const PANEL_GAP: f64 = 18.0;
+const PANEL_WIDTH: f64 = 380.0;
+const FOLLOW_INTERVAL: Duration = Duration::from_millis(16);
 
 // The controls seen when the panel opened, read before it took focus.
 #[derive(Default)]
@@ -24,28 +29,76 @@ struct Target {
     caption: String,
 }
 
-// Keeps the panel in the corner of the main display, because the middle of
-// the screen is where the cursor is most likely to need to point.
+// Sits the prompt beside the real cursor, and flips it to the other side
+// near a screen edge so that it never slides out of view.
 fn place_panel(panel: &WebviewWindow) -> tauri::Result<()> {
-    let Some(monitor) = panel.primary_monitor()? else {
+    let mouse = panel.cursor_position()?;
+
+    let monitor = panel.available_monitors()?.into_iter().find(|monitor| {
+        let origin = monitor.position();
+        let size = monitor.size();
+
+        mouse.x >= origin.x as f64
+            && mouse.y >= origin.y as f64
+            && mouse.x < origin.x as f64 + size.width as f64
+            && mouse.y < origin.y as f64 + size.height as f64
+    });
+
+    let Some(monitor) = monitor else {
         return Ok(());
     };
 
     let scale = monitor.scale_factor();
     let origin = monitor.position().to_logical::<f64>(scale);
     let screen = monitor.size().to_logical::<f64>(scale);
-    let panel_size = panel.outer_size()?.to_logical::<f64>(scale);
+    let size = panel.outer_size()?.to_logical::<f64>(scale);
+    let (x, y) = (mouse.x / scale, mouse.y / scale);
 
-    panel.set_position(LogicalPosition::new(
-        origin.x + screen.width - panel_size.width - PANEL_MARGIN,
-        origin.y + screen.height - panel_size.height - PANEL_MARGIN,
-    ))
+    let left = if x + PANEL_GAP + size.width > origin.x + screen.width {
+        x - PANEL_GAP - size.width
+    } else {
+        x + PANEL_GAP
+    };
+
+    let top = if y + PANEL_GAP + size.height > origin.y + screen.height {
+        y - PANEL_GAP - size.height
+    } else {
+        y + PANEL_GAP
+    };
+
+    panel.set_position(LogicalPosition::new(left, top))
 }
 
-// Reads the screen first and only then shows the panel, because the panel
-// would otherwise become the focused window being read.
+// Keeps a visible prompt moving with the real cursor, skipping the update
+// when the mouse is still so that an idle prompt costs next to nothing.
+fn follow_cursor(app: AppHandle) {
+    let panel = app.get_webview_window("panel").expect("panel window");
+    let mut last = (0.0, 0.0);
+
+    loop {
+        thread::sleep(FOLLOW_INTERVAL);
+
+        let Ok(mouse) = panel.cursor_position() else {
+            continue;
+        };
+
+        let moved = (mouse.x, mouse.y) != last;
+
+        if moved && panel.is_visible().unwrap_or(false) {
+            let _ = place_panel(&panel);
+            last = (mouse.x, mouse.y);
+        }
+    }
+}
+
+// Reads the screen first and only then shows the prompt, because it would
+// otherwise be the focused window being read, and a second press closes it.
 fn summon(app: &AppHandle) -> tauri::Result<()> {
     let panel = app.get_webview_window("panel").expect("panel window");
+
+    if panel.is_visible()? && panel.is_focused()? {
+        return app.emit_to("panel", "close", ());
+    }
 
     *app.state::<Screen>().0.lock().expect("screen lock") = elements::read();
 
@@ -53,6 +106,15 @@ fn summon(app: &AppHandle) -> tauri::Result<()> {
     panel.show()?;
     panel.set_focus()?;
     app.emit_to("panel", "summoned", ())
+}
+
+// Resizes the prompt to fit its content, because an invisible oversized
+// window beside the cursor would swallow clicks meant for the app below.
+#[tauri::command]
+fn fit_panel(app: AppHandle, height: f64) -> tauri::Result<()> {
+    app.get_webview_window("panel")
+        .expect("panel window")
+        .set_size(LogicalSize::new(PANEL_WIDTH, height))
 }
 
 // Hands the panel the controls read when it opened, which it sends along
@@ -148,13 +210,19 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(shortcuts)
         .manage(Screen::default())
-        .setup(|_app| {
+        .setup(|app| {
             #[cfg(target_os = "macos")]
-            _app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
+            let handle = app.handle().clone();
+
+            thread::spawn(move || follow_cursor(handle));
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![dismiss, point, screen])
+        .invoke_handler(tauri::generate_handler![
+            dismiss, fit_panel, point, screen
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -4,9 +4,10 @@ import { type FormEvent, useEffect, useRef, useState } from "react";
 
 import { ask, type Control, reset } from "./agent";
 
-// Shows the prompt that opens with the hotkey, and refocuses it each time,
-// so a person can start typing straight away from any app.
+// Shows the field that travels beside the cursor, refocused on each press of
+// the hotkey so a person can start typing straight away from any app.
 export function Panel() {
+  const form = useRef<HTMLFormElement>(null);
   const input = useRef<HTMLInputElement>(null);
   const [question, setQuestion] = useState("");
   const [reply, setReply] = useState("");
@@ -14,8 +15,21 @@ export function Panel() {
 
   useEffect(() => {
     const summoned = listen("summoned", () => input.current?.focus());
+    const closing = listen("close", close);
 
-    return () => void summoned.then((stop) => stop());
+    const fit = new ResizeObserver(([entry]) => {
+      const height = Math.ceil(entry.contentRect.height);
+
+      void invoke("fit_panel", { height });
+    });
+
+    if (form.current) fit.observe(form.current);
+
+    return () => {
+      fit.disconnect();
+      void summoned.then((stop) => stop());
+      void closing.then((stop) => stop());
+    };
   }, []);
 
   // Sends the question with the controls read when the panel opened, and
@@ -55,21 +69,24 @@ export function Panel() {
 
   return (
     <form
+      ref={form}
       className="panel"
       onSubmit={submit}
       onKeyDown={(event) => {
         if (event.key === "Escape") close();
       }}
     >
-      {reply && <p>{reply}</p>}
+      <div className="card">
+        <input
+          ref={input}
+          value={question}
+          placeholder={busy ? "Looking…" : "Ask anything"}
+          onChange={(event) => setQuestion(event.target.value)}
+          autoFocus
+        />
 
-      <input
-        ref={input}
-        value={question}
-        placeholder={busy ? "Looking…" : "Ask anything"}
-        onChange={(event) => setQuestion(event.target.value)}
-        autoFocus
-      />
+        {reply && <p>{reply}</p>}
+      </div>
     </form>
   );
 }

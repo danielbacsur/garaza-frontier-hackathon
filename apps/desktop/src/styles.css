@@ -16,27 +16,27 @@ body,
 }
 
 .panel {
+  box-sizing: border-box;
+  padding: 10px;
+}
+
+.card {
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
   gap: 8px;
-  box-sizing: border-box;
-  height: 100%;
-  padding: 12px;
+  padding: 12px 14px;
   border-radius: 14px;
   color: light-dark(#111, #f4f4f4);
   background: light-dark(#fff, #1c1c1e);
 }
 
-.panel input {
+.card input {
   all: unset;
   width: 100%;
 }
 
-.panel p {
-  flex: 1;
+.card p {
   margin: 0;
-  overflow-y: auto;
 }
 
 .cursor {
