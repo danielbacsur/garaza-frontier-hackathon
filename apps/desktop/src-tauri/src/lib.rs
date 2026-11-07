@@ -1,7 +1,20 @@
-use tauri::{AppHandle, Emitter, LogicalPosition, Manager, WebviewWindow};
+mod elements;
+
+use std::sync::Mutex;
+
+use elements::Element;
+
+use tauri::{
+    AppHandle, Emitter, LogicalPosition, Manager, State, WebviewWindow,
+};
+
 use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutState};
 
 const PANEL_MARGIN: f64 = 24.0;
+
+// The controls seen when the panel opened, read before it took focus.
+#[derive(Default)]
+struct Screen(Mutex<Vec<Element>>);
 
 // Keeps the panel in the corner of the main display, because the middle of
 // the screen is where the cursor is most likely to need to point.
@@ -21,15 +34,24 @@ fn place_panel(panel: &WebviewWindow) -> tauri::Result<()> {
     ))
 }
 
-// Shows the panel in its corner and tells it to take the keyboard, which
-// works from any app because the shortcut is global.
+// Reads the screen first and only then shows the panel, because the panel
+// would otherwise become the focused window being read.
 fn summon(app: &AppHandle) -> tauri::Result<()> {
     let panel = app.get_webview_window("panel").expect("panel window");
+
+    *app.state::<Screen>().0.lock().expect("screen lock") = elements::read();
 
     place_panel(&panel)?;
     panel.show()?;
     panel.set_focus()?;
     app.emit_to("panel", "summoned", ())
+}
+
+// Hands the panel the controls read when it opened, which it sends along
+// with the question because the agent cannot see this machine.
+#[tauri::command]
+fn screen(state: State<Screen>) -> Vec<Element> {
+    state.0.lock().expect("screen lock").clone()
 }
 
 // Hides the whole app rather than one window, which is what hands keyboard
@@ -64,13 +86,14 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(shortcuts)
+        .manage(Screen::default())
         .setup(|_app| {
             #[cfg(target_os = "macos")]
             _app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![dismiss])
+        .invoke_handler(tauri::generate_handler![dismiss, screen])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
