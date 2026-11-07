@@ -7,7 +7,15 @@ import {
 } from "@tauri-apps/api/window";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
-import { AUTOMATIC, ask, type Plan, reset, type Shot, stop } from "./agent";
+import {
+  AUTOMATIC,
+  ask,
+  LimitReached,
+  type Plan,
+  reset,
+  type Shot,
+  stop,
+} from "./agent";
 import pointer from "./assets/cursor.png";
 
 type Spot = { x: number; y: number };
@@ -36,6 +44,7 @@ const FADE_MS = 350;
 const SHY_CHECK_MS = 120;
 const SHY_DISTANCE = 28;
 const FALLBACK = "Something went wrong. Please try again.";
+const LIMIT = "This conversation got long, so I started over. Ask again.";
 const REST_GAP = 28;
 const SPRING = 14;
 
@@ -303,8 +312,11 @@ export function Cursor() {
         void invoke("report", { message: `turn failed: ${error}` });
         plan.current = undefined;
         setStep("");
-        setSpeech(FALLBACK);
-        linger(FALLBACK);
+
+        const words = error instanceof LimitReached ? LIMIT : FALLBACK;
+
+        setSpeech(words);
+        linger(words);
       } finally {
         if (isCurrent()) busy.current = false;
       }

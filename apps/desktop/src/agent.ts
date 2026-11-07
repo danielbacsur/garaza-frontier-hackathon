@@ -18,6 +18,10 @@ export type Spot = { x: number; y: number };
 export const AUTOMATIC =
   "(The screen changed after the user acted. No message from the user.)";
 
+// Thrown when the conversation stops to wait for someone to approve going on,
+// which only its spending cap does, since this agent asks nothing itself.
+export class LimitReached extends Error {}
+
 // The steps of a task, and how many are not done yet.
 export type Plan = {
   steps: { title: string; done: boolean }[];
@@ -165,6 +169,12 @@ export async function ask(
         if (tools.get(callId) === "plan") onPlan(output as Plan);
 
         break;
+      }
+
+      case "interaction.opened": {
+        // Nobody can approve more spending from a bubble, so it starts over.
+        reset();
+        throw new LimitReached();
       }
     }
   }
