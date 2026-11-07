@@ -1,0 +1,34 @@
+:root {
+  color-scheme: light dark;
+  font:
+    14px/1.4 -apple-system,
+    "Segoe UI",
+    sans-serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: transparent;
+  overflow: hidden;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 8px;
+  box-sizing: border-box;
+  height: 100%;
+  padding: 12px;
+  border-radius: 14px;
+  color: light-dark(#111, #f4f4f4);
+  background: light-dark(#fffffff2, #1c1c1ef2);
+}
+
+.panel input {
+  all: unset;
+  width: 100%;
+}

@@ -12,11 +12,29 @@
   },
 
   "app": {
-    "windows": [],
+    "windows": [
+      {
+        "label": "panel",
+        "url": "index.html?view=panel",
+        "title": "Second Cursor",
+        "width": 420,
+        "height": 150,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "shadow": false,
+        "visible": false,
+        "resizable": false,
+        "skipTaskbar": true,
+        "visibleOnAllWorkspaces": true
+      }
+    ],
 
     "security": {
       "csp": null
-    }
+    },
+
+    "macOSPrivateApi": true
   },
 
   "bundle": {
