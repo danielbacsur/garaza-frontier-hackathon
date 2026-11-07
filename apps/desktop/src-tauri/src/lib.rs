@@ -216,7 +216,6 @@ fn think(app: AppHandle, question: String) -> tauri::Result<()> {
     let y = mouse.y / scale + CURSOR_GAP;
 
     cover_monitor(&cursor, x, y)?;
-    cursor.set_ignore_cursor_events(true)?;
     cursor.show()?;
     app.emit_to("cursor", "think", Request { x, y, question })
 }
@@ -279,6 +278,37 @@ fn dismiss(app: AppHandle) -> tauri::Result<()> {
     rest(app)
 }
 
+// The window layer macos keeps for assistive tools, from CoreGraphics.
+#[cfg(target_os = "macos")]
+const ASSISTIVE_TECH_HIGH_LEVEL_KEY: i32 = 20;
+
+#[cfg(target_os = "macos")]
+#[link(name = "CoreGraphics", kind = "framework")]
+unsafe extern "C" {
+    fn CGWindowLevelForKey(key: i32) -> i32;
+}
+
+// Lifts the overlay into the layer kept for assistive tools, above menus
+// and tooltips, so it is never hidden and can point into a menu.
+#[cfg(target_os = "macos")]
+fn raise_above_menus(window: &WebviewWindow) -> tauri::Result<()> {
+    let ns_window = window.ns_window()? as *mut objc2::runtime::AnyObject;
+    let level = unsafe { CGWindowLevelForKey(ASSISTIVE_TECH_HIGH_LEVEL_KEY) };
+
+    unsafe {
+        let _: () = objc2::msg_send![ns_window, setLevel: level as isize];
+    }
+
+    Ok(())
+}
+
+// Leaves the overlay in its layer on systems without one for assistive
+// tools, where it already floats above other windows.
+#[cfg(not(target_os = "macos"))]
+fn raise_above_menus(_window: &WebviewWindow) -> tauri::Result<()> {
+    Ok(())
+}
+
 // Starts the app with its global hotkey and runs it as an accessory, which
 // keeps it out of the dock and the app switcher.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -308,6 +338,11 @@ pub fn run() {
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
             journal::start(app.path().app_log_dir()?);
+
+            let cursor = app.get_webview_window("cursor").expect("cursor");
+
+            cursor.set_ignore_cursor_events(true)?;
+            raise_above_menus(&cursor)?;
 
             let handle = app.handle().clone();
 

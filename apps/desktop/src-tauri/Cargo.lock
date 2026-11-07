@@ -581,6 +581,7 @@ dependencies = [
  "core-graphics",
  "core-graphics-types",
  "image",
+ "objc2",
  "objc2-app-kit",
  "serde",
  "serde_json",
