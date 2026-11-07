@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
-import { ask, type Control, reset } from "./agent";
+import { ask, reset, type Shot } from "./agent";
 import pointer from "./assets/cursor.png";
 
 type Spot = { x: number; y: number };
@@ -100,11 +100,11 @@ export function Cursor() {
       setSpot(await toOverlay(payload));
 
       try {
-        const elements = await invoke<Control[]>("screen");
+        const { generation, picture } = await invoke<Shot>("screen");
 
-        const reply = await ask(payload.question, elements, {
-          onPoint: (elementId) => {
-            if (isCurrent()) void invoke("point", { elementId });
+        const reply = await ask(payload.question, picture, {
+          onPoint: ({ x, y }) => {
+            if (isCurrent()) void invoke("point", { x, y, generation });
           },
 
           onText: (text) => {

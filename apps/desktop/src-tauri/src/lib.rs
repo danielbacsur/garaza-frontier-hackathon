@@ -1,10 +1,10 @@
-mod elements;
+mod capture;
 
 use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
 
-use elements::Element;
+use capture::Picture;
 use serde::Serialize;
 
 use tauri::{
@@ -18,9 +18,16 @@ const PANEL_GAP: f64 = 18.0;
 const CURSOR_GAP: f64 = 28.0;
 const FOLLOW_INTERVAL: Duration = Duration::from_millis(16);
 
-// The controls seen when the prompt opened, read before it took focus.
+// The latest picture of the screen, numbered so that a spot the agent picked
+// on an older picture is never placed on a newer one.
+#[derive(Clone, Default, Serialize)]
+struct Shot {
+    generation: u64,
+    picture: Option<Picture>,
+}
+
 #[derive(Default)]
-struct Screen(Mutex<Vec<Element>>);
+struct Screen(Mutex<Shot>);
 
 // The app that was in front when the prompt opened, which gets focus back.
 #[derive(Default)]
@@ -110,8 +117,18 @@ fn follow_cursor(app: AppHandle) {
     }
 }
 
-// Reads the screen first and only then shows the prompt, because it would
-// otherwise be the focused window being read, and a second press closes it.
+// Stores a fresh picture of the screen under the next number, which is how
+// the agent's later spots are matched to what it was shown.
+fn publish(app: &AppHandle, picture: Option<Picture>) {
+    let state = app.state::<Screen>();
+    let mut shot = state.0.lock().expect("screen lock");
+
+    shot.generation += 1;
+    shot.picture = picture;
+}
+
+// Pictures the screen first and only then shows the prompt, because it would
+// otherwise cover the window in use, and a second press closes it.
 fn summon(app: &AppHandle) -> tauri::Result<()> {
     let panel = app.get_webview_window("panel").expect("panel window");
 
@@ -119,9 +136,10 @@ fn summon(app: &AppHandle) -> tauri::Result<()> {
         return app.emit_to("panel", "close", ());
     }
 
-    *app.state::<Screen>().0.lock().expect("screen lock") = elements::read();
-    *app.state::<FrontApp>().0.lock().expect("front lock") =
-        elements::focused_app_id();
+    let front = capture::front_app();
+
+    publish(app, front.and_then(capture::capture));
+    *app.state::<FrontApp>().0.lock().expect("front lock") = front;
 
     place_panel(&panel)?;
     panel.show()?;
@@ -135,14 +153,14 @@ fn return_focus(app: &AppHandle) {
     let front = *app.state::<FrontApp>().0.lock().expect("front lock");
 
     if let Some(app_id) = front {
-        elements::activate(app_id);
+        capture::activate(app_id);
     }
 }
 
-// Hands the panel the controls read when it opened, which it sends along
-// with the question because the agent cannot see this machine.
+// Hands over the picture taken when the prompt opened, which goes along with
+// the question because the agent cannot see this machine.
 #[tauri::command]
-fn screen(state: State<Screen>) -> Vec<Element> {
+fn screen(state: State<Screen>) -> Shot {
     state.0.lock().expect("screen lock").clone()
 }
 
@@ -193,23 +211,26 @@ fn think(app: AppHandle, question: String) -> tauri::Result<()> {
     app.emit_to("cursor", "think", Request { x, y, question })
 }
 
-// Moves the second cursor to a control the agent picked, ignoring ids from
-// any older snapshot, while clicks still pass through to the app beneath it.
+// Moves the second cursor to the spot the agent picked on the picture, given
+// as parts of its width and height, ignoring spots on any older picture.
 #[tauri::command]
 fn point(
     app: AppHandle,
     state: State<Screen>,
-    element_id: usize,
+    x: f64,
+    y: f64,
+    generation: u64,
 ) -> tauri::Result<()> {
-    let center = state
-        .0
-        .lock()
-        .expect("screen lock")
-        .iter()
-        .find(|element| element.id == element_id)
-        .map(|element| element.center);
+    let spot = {
+        let shot = state.0.lock().expect("screen lock");
 
-    let Some((x, y)) = center else {
+        shot.picture
+            .as_ref()
+            .filter(|_| shot.generation == generation)
+            .and_then(|picture| picture.frame.place(x, y))
+    };
+
+    let Some((x, y)) = spot else {
         return Ok(());
     };
 
