@@ -26,9 +26,9 @@ pub struct Watch(Mutex<Option<Task>>);
 
 #[cfg(target_os = "macos")]
 mod input {
-    // Event kinds a person makes on purpose: mouse buttons, keys and scrolls,
-    // but never plain moves, which happen while reading too.
-    const KINDS: [u32; 5] = [1, 3, 25, 10, 22];
+    // Event kinds a person makes on purpose: mouse buttons going down and up,
+    // drags, keys and scrolls, but never plain moves, which reading makes too.
+    const KINDS: [u32; 11] = [1, 2, 3, 4, 6, 7, 10, 22, 25, 26, 27];
     const COMBINED_SESSION: i32 = 0;
 
     #[link(name = "CoreGraphics", kind = "framework")]
@@ -70,16 +70,22 @@ fn last_action(now: Instant) -> Option<Instant> {
 // cursor turns it off as each turn starts and on again once a turn ends.
 #[tauri::command]
 pub fn watch(app: AppHandle, on: bool) {
-    let screen = app.state::<Screen>();
-    let baseline = screen.0.lock().expect("screen lock").picture.clone();
-    let now = Instant::now();
+    let (baseline, since) = {
+        let shot = app.state::<Screen>();
+        let shot = shot.0.lock().expect("screen lock");
+
+        (shot.picture.clone(), shot.since)
+    };
+
+    // Whatever the person did while the agent was answering counts too.
+    let since = since.unwrap_or_else(Instant::now);
 
     journal::event(if on { "watch: on" } else { "watch: off" });
 
     *app.state::<Watch>().0.lock().expect("watch lock") = on.then(|| Task {
         baseline,
-        checked: now,
-        acted: now,
+        checked: since,
+        acted: since,
     });
 }
 
@@ -149,17 +155,10 @@ fn due(app: &AppHandle, now: Instant) -> Option<Option<Picture>> {
     Some(task.baseline.clone())
 }
 
-// Checks whether our own windows are in the way, because the prompt being
-// open means the person is asking something rather than doing the task.
-fn busy(app: &AppHandle) -> bool {
-    let panel_open = app
-        .get_webview_window("panel")
-        .and_then(|panel| panel.is_visible().ok())
-        .unwrap_or(false);
-
-    let ours = capture::front_app() == Some(std::process::id() as i32);
-
-    panel_open || ours
+// Checks whether our own app is in front, because typing into the prompt
+// means the person is asking something rather than doing the task.
+fn busy() -> bool {
+    capture::front_app() == Some(std::process::id() as i32)
 }
 
 // Reads which picture of the screen is the latest, so a slow look of our
@@ -178,7 +177,7 @@ fn follow(app: AppHandle) {
     loop {
         thread::sleep(TICK);
 
-        if busy(&app) {
+        if busy() {
             pause(&app);
             continue;
         }
@@ -201,7 +200,7 @@ fn follow(app: AppHandle) {
 
         // The prompt may have opened, or pictured the screen itself, while
         // this picture settled.
-        let stale = busy(&app) || current_generation(&app) != generation;
+        let stale = busy() || current_generation(&app) != generation;
 
         if stale || !changed {
             continue;
@@ -218,6 +217,11 @@ fn follow(app: AppHandle) {
         drop(watch);
 
         if !publish_if(&app, picture, generation) {
+            continue;
+        }
+
+        // The person may have dismissed the cursor while this picture settled.
+        if app.state::<Watch>().0.lock().expect("watch lock").is_none() {
             continue;
         }
 
