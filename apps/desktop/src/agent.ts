@@ -27,6 +27,15 @@ let session: ClientSession | undefined;
 const isPointer = (output: unknown): output is Pointer =>
   typeof output === "object" && output !== null && "say" in output;
 
+// Removes the markdown models sometimes add anyway, because the bubble shows
+// plain text and stray symbols would read as noise.
+export function plain(text: string) {
+  return text
+    .replace(/\*\*|__|`/g, "")
+    .replace(/^#+\s*/gm, "")
+    .replace(/^\s*[-*]\s+/gm, "");
+}
+
 // Puts the message and the picture of the window together, naming the app
 // and window so the agent knows what it is looking at.
 function compose(message: string, picture: Picture | null) {
@@ -76,12 +85,12 @@ export async function ask(
   for await (const event of delivery.stream()) {
     if (event.type === "content.delta" && event.data.kind === "text") {
       text += event.data.delta;
-      onText(text);
+      onText(plain(text));
     }
 
     if (event.type === "content.completed" && event.data.kind === "text") {
       text = String(event.data.value);
-      onText(text);
+      onText(plain(text));
     }
 
     if (event.type === "call.settled" && isPointer(event.data.output)) {
@@ -91,12 +100,12 @@ export async function ask(
 
       if (say) {
         text = say;
-        onText(text);
+        onText(plain(text));
       }
     }
   }
 
-  return text;
+  return plain(text);
 }
 
 // Ends the conversation, so the next question starts fresh and no longer
