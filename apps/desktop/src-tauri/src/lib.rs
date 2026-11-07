@@ -2,6 +2,7 @@ mod capture;
 mod journal;
 
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
@@ -16,7 +17,6 @@ use tauri::{
 use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutState};
 
 const PANEL_GAP: f64 = 18.0;
-const CURSOR_GAP: f64 = 28.0;
 const FOLLOW_INTERVAL: Duration = Duration::from_millis(16);
 
 // The latest picture of the screen, numbered so that a spot the agent picked
@@ -30,6 +30,11 @@ struct Shot {
 #[derive(Default)]
 struct Screen(Mutex<Shot>);
 
+// Whether the second cursor is holding a spot it pointed at, rather than
+// trailing beside the mouse.
+#[derive(Default)]
+struct Pointing(AtomicBool);
+
 // The app that was in front when the prompt opened, which gets focus back.
 #[derive(Default)]
 struct FrontApp(Mutex<Option<i32>>);
@@ -40,6 +45,7 @@ struct Spot {
     y: f64,
 }
 
+// A question, with where the mouse was so the cursor can appear beside it.
 #[derive(Clone, Serialize)]
 struct Request {
     x: f64,
@@ -96,11 +102,14 @@ fn place_panel(panel: &WebviewWindow) -> tauri::Result<()> {
     panel.set_position(LogicalPosition::new(left, top))
 }
 
-// Keeps a visible prompt moving with the real cursor, skipping the update
-// when the mouse is still so that an idle prompt costs next to nothing.
+// Keeps a visible prompt moving with the real cursor and tells the second
+// cursor where the mouse is, skipping both while the mouse is still.
 fn follow_cursor(app: AppHandle) {
     let panel = app.get_webview_window("panel").expect("panel window");
+    let cursor = app.get_webview_window("cursor").expect("cursor window");
     let mut last = (0.0, 0.0);
+    let mut covered = None;
+    let mut pointed = false;
 
     loop {
         thread::sleep(FOLLOW_INTERVAL);
@@ -110,12 +119,96 @@ fn follow_cursor(app: AppHandle) {
         };
 
         let moved = (mouse.x, mouse.y) != last;
+        let was_pointed = pointed;
+
+        pointed = app.state::<Pointing>().0.load(Ordering::Relaxed);
+        last = (mouse.x, mouse.y);
 
         if moved && panel.is_visible().unwrap_or(false) {
             let _ = place_panel(&panel);
-            last = (mouse.x, mouse.y);
+        }
+
+        // Pointing may have moved the overlay onto another display.
+        if was_pointed && !pointed {
+            covered = None;
+        }
+
+        if !pointed && (moved || was_pointed) {
+            let _ = share_mouse(&app, &cursor, mouse, &mut covered);
         }
     }
+}
+
+// The display the overlay currently covers, kept so that following the mouse
+// costs no lookups until the mouse leaves it.
+#[derive(Clone, Copy)]
+struct Covered {
+    origin: PhysicalPosition<f64>,
+    size: (f64, f64),
+    scale: f64,
+}
+
+impl Covered {
+    // Checks whether the mouse is still on this display, which is all that
+    // following it needs to know most of the time.
+    fn holds(&self, mouse: PhysicalPosition<f64>) -> bool {
+        mouse.x >= self.origin.x
+            && mouse.y >= self.origin.y
+            && mouse.x < self.origin.x + self.size.0
+            && mouse.y < self.origin.y + self.size.1
+    }
+}
+
+// Spreads the overlay over the display under the mouse and notes which one
+// it is, so the next moves on the same display need no lookups.
+fn cover(
+    cursor: &WebviewWindow,
+    mouse: PhysicalPosition<f64>,
+) -> tauri::Result<Option<Covered>> {
+    let Some(monitor) = monitor_under(cursor, mouse)? else {
+        return Ok(None);
+    };
+
+    let scale = monitor.scale_factor();
+    let origin = monitor.position();
+    let size = monitor.size();
+
+    cover_monitor(cursor, mouse.x / scale, mouse.y / scale)?;
+
+    Ok(Some(Covered {
+        origin: PhysicalPosition::new(origin.x as f64, origin.y as f64),
+        size: (size.width as f64, size.height as f64),
+        scale,
+    }))
+}
+
+// Tells the second cursor where the mouse is, in screen points like every
+// other position it is given, so it can stay just beside it.
+fn share_mouse(
+    app: &AppHandle,
+    cursor: &WebviewWindow,
+    mouse: PhysicalPosition<f64>,
+    covered: &mut Option<Covered>,
+) -> tauri::Result<()> {
+    if !covered.is_some_and(|display| display.holds(mouse)) {
+        *covered = cover(cursor, mouse)?;
+    }
+
+    let Some(display) = *covered else {
+        return Ok(());
+    };
+
+    let x = mouse.x / display.scale;
+    let y = mouse.y / display.scale;
+
+    app.emit_to("cursor", "mouse", Spot { x, y })
+}
+
+// Lets go of the spot being pointed at, so the second cursor comes back
+// beside the mouse to say something that has nothing to do with it.
+#[tauri::command]
+fn release(pointing: State<Pointing>) {
+    pointing.0.store(false, Ordering::Relaxed);
 }
 
 // Stores a fresh picture of the screen under the next number, which is how
@@ -207,13 +300,16 @@ fn think(app: AppHandle, question: String) -> tauri::Result<()> {
     panel.hide()?;
     return_focus(&app);
 
+    // A new question starts beside the mouse, not on the last spot.
+    app.state::<Pointing>().0.store(false, Ordering::Relaxed);
+
     let Some(monitor) = monitor_under(&cursor, mouse)? else {
+        journal::event("think: no monitor under the mouse");
         return Ok(());
     };
 
     let scale = monitor.scale_factor();
-    let x = mouse.x / scale + CURSOR_GAP;
-    let y = mouse.y / scale + CURSOR_GAP;
+    let (x, y) = (mouse.x / scale, mouse.y / scale);
 
     cover_monitor(&cursor, x, y)?;
     cursor.show()?;
@@ -247,6 +343,7 @@ fn point(
     };
 
     journal::event(&format!("point: {x:.0},{y:.0}"));
+    app.state::<Pointing>().0.store(true, Ordering::Relaxed);
 
     let cursor = app.get_webview_window("cursor").expect("cursor window");
 
@@ -254,10 +351,12 @@ fn point(
     app.emit_to("cursor", "point", Spot { x, y })
 }
 
-// Sends the second cursor away once it has had its say, leaving the prompt
+// Puts the second cursor away once it has had its say, leaving the prompt
 // alone so that a person typing a follow-up is not interrupted.
 #[tauri::command]
 fn rest(app: AppHandle) -> tauri::Result<()> {
+    app.state::<Pointing>().0.store(false, Ordering::Relaxed);
+
     app.get_webview_window("cursor")
         .expect("cursor window")
         .hide()?;
@@ -333,6 +432,7 @@ pub fn run() {
         .plugin(shortcuts)
         .manage(Screen::default())
         .manage(FrontApp::default())
+        .manage(Pointing::default())
         .setup(|app| {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
@@ -351,7 +451,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            dismiss, point, report, rest, screen, think
+            dismiss, point, release, report, rest, screen, think
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
