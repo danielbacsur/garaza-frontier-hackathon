@@ -110,14 +110,6 @@ async function isMouseNear(bubble: HTMLElement, margin: number) {
   );
 }
 
-// Says which step of a task is under way, counting from the first one left,
-// so a person can see how far along they are.
-function progress({ steps, remaining }: Plan) {
-  if (!remaining) return "";
-
-  return `Step ${steps.length - remaining + 1} of ${steps.length}`;
-}
-
 // Places the bubble along one axis, measured from the cursor's tip, so that
 // mirroring both shapes near a screen edge keeps them nested together.
 function offset(origin: number, tip: number, size: number, mirrored: boolean) {
@@ -146,7 +138,6 @@ export function Cursor() {
   const [leaving, setLeaving] = useState(false);
   const [shy, setShy] = useState(false);
   const [size, setSize] = useState<Size>();
-  const [step, setStep] = useState("");
 
   useEffect(() => {
     const overlay = getCurrentWindow();
@@ -238,7 +229,6 @@ export function Cursor() {
       }
 
       plan.current = undefined;
-      setStep("");
       guiding.current = pointed;
 
       // A follow-up that found nothing to say puts the cursor away quietly
@@ -314,14 +304,12 @@ export function Cursor() {
             if (!isCurrent()) return;
 
             plan.current = undefined;
-            setStep("");
           },
 
           onPlan: (next) => {
             if (!isCurrent()) return;
 
             plan.current = next;
-            setStep(progress(next));
           },
         });
 
@@ -331,7 +319,6 @@ export function Cursor() {
 
         void invoke("report", { message: `turn failed: ${error}` });
         plan.current = undefined;
-        setStep("");
 
         const words = error instanceof LimitReached ? LIMIT : FALLBACK;
 
@@ -373,7 +360,6 @@ export function Cursor() {
     const abandoning = listen("abandoned", () => {
       plan.current = undefined;
       guiding.current = false;
-      setStep("");
       linger(said.current);
     });
 
@@ -428,7 +414,6 @@ export function Cursor() {
       plan.current = undefined;
       guiding.current = false;
       said.current = "";
-      setStep("");
       reset();
     });
 
@@ -471,7 +456,7 @@ export function Cursor() {
     setSize(
       box ? { width: box.offsetWidth, height: box.offsetHeight } : undefined,
     );
-  }, [speech, step]);
+  }, [speech]);
 
   if (!spot) return null;
 
@@ -531,7 +516,6 @@ export function Cursor() {
               top: offset(BUBBLE_ORIGIN, TIP.y, height, flipY),
             }}
           >
-            {step && <div className="step">{step}</div>}
             {speech}
           </div>
         </div>
