@@ -1,19 +1,13 @@
 {
-  "name": "cursor",
+  "name": "@cuwd/agent-cursor",
   "version": "0.0.0",
+  "private": true,
   "type": "module",
-
-  "imports": {
-    "#*": "./agent/*",
-    "#evals/*": "./evals/*"
-  },
 
   "scripts": {
     "build": "eve build",
-    "deploy": "eve deploy",
-    "dev": "eve dev",
-    "eval": "eve eval",
-    "start": "eve start",
+    "dev": "eve dev --port 3001",
+    "start": "eve start --port 3001",
     "typecheck": "tsc"
   },
 
@@ -25,7 +19,7 @@
   },
 
   "devDependencies": {
-    "@types/node": "24.x",
-    "typescript": "7.0.2"
+    "@types/node": "^24",
+    "typescript": "^7"
   }
 }
