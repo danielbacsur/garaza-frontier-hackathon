@@ -168,7 +168,10 @@ fn follow_cursor(app: AppHandle) {
             covered = None;
         }
 
-        if !pointed && (moved || was_pointed) {
+        // A hidden cursor has nobody to follow for, and takes no updates.
+        let wanted = !pointed && (moved || was_pointed);
+
+        if wanted && cursor.is_visible().unwrap_or(false) {
             let _ = share_mouse(&app, &cursor, mouse, &mut covered);
         }
     }
