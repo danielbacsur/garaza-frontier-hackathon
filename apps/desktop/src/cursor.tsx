@@ -188,16 +188,19 @@ export function Cursor() {
         return;
       }
 
-      const step = Math.min((now - then) / 1000, 1 / 30);
+      const elapsed = Math.min((now - then) / 1000, 1 / 30);
       const speed = velocity.current;
 
       const pull = (to: number, at: number, v: number) =>
         SPRING * SPRING * (to - at) - 2 * SPRING * v;
 
-      speed.x += pull(target.x, from.x, speed.x) * step;
-      speed.y += pull(target.y, from.y, speed.y) * step;
+      speed.x += pull(target.x, from.x, speed.x) * elapsed;
+      speed.y += pull(target.y, from.y, speed.y) * elapsed;
 
-      const next = { x: from.x + speed.x * step, y: from.y + speed.y * step };
+      const next = {
+        x: from.x + speed.x * elapsed,
+        y: from.y + speed.y * elapsed,
+      };
       const near = Math.hypot(target.x - next.x, target.y - next.y) < 0.3;
       const slow = Math.hypot(speed.x, speed.y) < 2;
 
@@ -417,6 +420,8 @@ export function Cursor() {
       setLeaving(false);
     });
 
+    // The person dismissed the cursor, so the conversation and any task end
+    // here, and the next question starts from nothing.
     const forgetting = listen("forget", () => {
       turn.current += 1;
       busy.current = false;

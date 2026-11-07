@@ -31,7 +31,7 @@ export default defineTool({
   toModelOutput: ({ steps, remaining }) => ({
     type: "text",
     value: remaining
-      ? `${remaining} steps left. Guide the user through the first one.`
+      ? `Steps left: ${remaining}. Guide the first one that is not done.`
       : steps.length
         ? "Every step is done. Tell the user in one short sentence."
         : "The plan is cleared.",

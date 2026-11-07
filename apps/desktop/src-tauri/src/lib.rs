@@ -205,29 +205,22 @@ fn release(pointing: State<Pointing>) {
     pointing.0.store(false, Ordering::Relaxed);
 }
 
-// Stores a fresh picture of the screen under the next number, which is how
-// the agent's later spots are matched to what it was shown.
-fn publish(app: &AppHandle, picture: Option<Picture>) {
+// Stores a picture under the next number, to match the agent's spots with,
+// unless one taken later was already stored while this one was being taken.
+fn publish(
+    app: &AppHandle,
+    picture: Option<Picture>,
+    taken_under: Option<u64>,
+) -> bool {
     let state = app.state::<Screen>();
     let mut shot = state.0.lock().expect("screen lock");
 
-    shot.generation += 1;
-    shot.picture = picture;
-    shot.since = Some(Instant::now());
-}
-
-// Stores a picture only if no newer one came in while it was being taken,
-// which a slow look by the watcher must never overwrite.
-fn publish_if(app: &AppHandle, picture: Picture, expected: u64) -> bool {
-    let state = app.state::<Screen>();
-    let mut shot = state.0.lock().expect("screen lock");
-
-    if shot.generation != expected {
+    if taken_under.is_some_and(|generation| generation != shot.generation) {
         return false;
     }
 
     shot.generation += 1;
-    shot.picture = Some(picture);
+    shot.picture = picture;
     shot.since = Some(Instant::now());
     true
 }
@@ -249,8 +242,8 @@ fn summon(app: &AppHandle) -> tauri::Result<()> {
     let picture = front.and_then(capture::capture);
 
     journal::event(&format!("summon: pictured {}", picture.is_some()));
-    publish(app, picture);
-    watch::pause(app);
+    publish(app, picture, None);
+    watch::forget_actions(app);
     *app.state::<FrontApp>().0.lock().expect("front lock") = front;
 
     place_panel(&panel)?;

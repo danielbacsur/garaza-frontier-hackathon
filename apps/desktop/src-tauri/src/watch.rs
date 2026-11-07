@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::capture::{self, Picture};
-use crate::{FrontApp, Screen, journal, publish_if};
+use crate::{FrontApp, Screen, journal, publish};
 
 const TICK: Duration = Duration::from_millis(250);
 const PAUSE: Duration = Duration::from_secs(1);
@@ -15,6 +15,7 @@ const GIVE_UP: Duration = Duration::from_secs(5 * 60);
 
 // A task being followed: what the screen looked like when the agent last
 // spoke, when it was last looked at, and when the person last did anything.
+#[derive(Clone)]
 struct Task {
     baseline: Option<Picture>,
     checked: Instant,
@@ -91,7 +92,7 @@ pub fn watch(app: AppHandle, on: bool) {
 
 // Forgets whatever was done so far, because pressing the hotkey is itself a
 // key press and must never read as progress on the task.
-pub fn pause(app: &AppHandle) {
+pub fn forget_actions(app: &AppHandle) {
     if let Some(task) =
         app.state::<Watch>().0.lock().expect("watch lock").as_mut()
     {
@@ -126,9 +127,9 @@ fn settled(app_id: i32) -> Option<Picture> {
     Some(picture)
 }
 
-// Decides whether the person has acted and then paused since the last look,
-// updating the task's clock either way, and gives up after a long silence.
-fn due(app: &AppHandle, now: Instant) -> Option<Option<Picture>> {
+// Hands over the task when the person has acted and then paused since the
+// last look, updating its clock either way, and gives up after a long silence.
+fn due(app: &AppHandle, now: Instant) -> Option<Task> {
     let state = app.state::<Watch>();
     let mut watch = state.0.lock().expect("watch lock");
     let task = watch.as_mut()?;
@@ -152,7 +153,7 @@ fn due(app: &AppHandle, now: Instant) -> Option<Option<Picture>> {
     }
 
     task.checked = now;
-    Some(task.baseline.clone())
+    Some(task.clone())
 }
 
 // Checks whether our own app is in front, because typing into the prompt
@@ -178,11 +179,11 @@ fn follow(app: AppHandle) {
         thread::sleep(TICK);
 
         if busy() {
-            pause(&app);
+            forget_actions(&app);
             continue;
         }
 
-        let Some(baseline) = due(&app, Instant::now()) else {
+        let Some(Task { baseline, .. }) = due(&app, Instant::now()) else {
             continue;
         };
 
@@ -216,7 +217,7 @@ fn follow(app: AppHandle) {
         task.baseline = Some(picture.clone());
         drop(watch);
 
-        if !publish_if(&app, picture, generation) {
+        if !publish(&app, Some(picture), Some(generation)) {
             continue;
         }
 
