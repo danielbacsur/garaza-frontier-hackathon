@@ -217,7 +217,7 @@ fn follow(app: AppHandle) {
         task.baseline = Some(picture.clone());
         drop(watch);
 
-        if !publish(&app, Some(picture), Some(generation)) {
+        if !publish(&app, picture, generation) {
             continue;
         }
 

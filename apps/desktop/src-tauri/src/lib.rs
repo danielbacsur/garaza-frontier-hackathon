@@ -2,8 +2,8 @@ mod capture;
 mod journal;
 mod watch;
 
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -18,6 +18,7 @@ use tauri::{
 use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutState};
 
 const PANEL_GAP: f64 = 18.0;
+const MAX_PICTURE_WAIT: Duration = Duration::from_secs(3);
 const FOLLOW_INTERVAL: Duration = Duration::from_millis(16);
 
 // The latest picture of the screen, numbered so that a spot the agent picked
@@ -31,10 +32,15 @@ struct Shot {
     // picture was taken, or since they asked about it.
     #[serde(skip)]
     since: Option<Instant>,
+
+    // Whether the picture under this number is still being taken.
+    #[serde(skip)]
+    pending: bool,
 }
 
+// The latest picture, and a signal for whoever waits on one being taken.
 #[derive(Default)]
-struct Screen(Mutex<Shot>);
+struct Screen(Mutex<Shot>, Condvar);
 
 // Whether the second cursor is holding a spot it pointed at, rather than
 // trailing beside the mouse.
@@ -206,27 +212,56 @@ fn release(pointing: State<Pointing>) {
 }
 
 // Stores a picture under the next number, to match the agent's spots with,
-// unless one taken later was already stored while this one was being taken.
-fn publish(
-    app: &AppHandle,
-    picture: Option<Picture>,
-    taken_under: Option<u64>,
-) -> bool {
+// unless a newer one was started while this one was being taken.
+fn publish(app: &AppHandle, picture: Picture, taken_under: u64) -> bool {
     let state = app.state::<Screen>();
     let mut shot = state.0.lock().expect("screen lock");
 
-    if taken_under.is_some_and(|generation| generation != shot.generation) {
+    if shot.generation != taken_under || shot.pending {
         return false;
     }
 
     shot.generation += 1;
-    shot.picture = picture;
+    shot.picture = Some(picture);
     shot.since = Some(Instant::now());
     true
 }
 
-// Pictures the screen first and only then shows the prompt, because it would
-// otherwise cover the window in use, and a second press closes it.
+// Pictures the app in use in the background under the next number, which
+// the prompt need not wait for, since the picture leaves our windows out.
+fn picture_later(app: &AppHandle, front: Option<i32>) {
+    let generation = {
+        let state = app.state::<Screen>();
+        let mut shot = state.0.lock().expect("screen lock");
+
+        shot.generation += 1;
+        shot.picture = None;
+        shot.since = Some(Instant::now());
+        shot.pending = true;
+        shot.generation
+    };
+
+    let app = app.clone();
+
+    thread::spawn(move || {
+        let picture = front.and_then(capture::capture);
+        let state = app.state::<Screen>();
+        let mut shot = state.0.lock().expect("screen lock");
+
+        journal::event(&format!("summon: pictured {}", picture.is_some()));
+
+        // A newer picture may have been started while this one was taken.
+        if shot.generation == generation {
+            shot.picture = picture;
+            shot.pending = false;
+        }
+
+        state.1.notify_all();
+    });
+}
+
+// Opens the prompt beside the mouse straight away and pictures the screen
+// meanwhile, or closes the prompt when it is already open.
 fn summon(app: &AppHandle) -> tauri::Result<()> {
     let panel = app.get_webview_window("panel").expect("panel window");
 
@@ -239,10 +274,8 @@ fn summon(app: &AppHandle) -> tauri::Result<()> {
     let ours = std::process::id() as i32;
     let remembered = *app.state::<FrontApp>().0.lock().expect("front lock");
     let front = capture::front_app().filter(|&id| id != ours).or(remembered);
-    let picture = front.and_then(capture::capture);
 
-    journal::event(&format!("summon: pictured {}", picture.is_some()));
-    publish(app, picture, None);
+    picture_later(app, front);
     watch::forget_actions(app);
     *app.state::<FrontApp>().0.lock().expect("front lock") = front;
 
@@ -262,11 +295,23 @@ fn return_focus(app: &AppHandle) {
     }
 }
 
-// Hands over the picture taken when the prompt opened, which goes along with
-// the question because the agent cannot see this machine.
+// Hands over the picture taken when the prompt opened, waiting for it if a
+// quick question beat it, since the agent cannot see this machine.
 #[tauri::command]
-fn screen(state: State<Screen>) -> Shot {
-    state.0.lock().expect("screen lock").clone()
+async fn screen(app: AppHandle) -> Shot {
+    let waited = tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<Screen>();
+        let shot = state.0.lock().expect("screen lock");
+
+        let (shot, _) = state
+            .1
+            .wait_timeout_while(shot, MAX_PICTURE_WAIT, |shot| shot.pending)
+            .expect("screen lock");
+
+        shot.clone()
+    });
+
+    waited.await.unwrap_or_default()
 }
 
 // Hides the prompt on its own, for when focus moves away from an empty field,
