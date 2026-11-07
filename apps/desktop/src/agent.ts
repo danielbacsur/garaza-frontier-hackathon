@@ -1,4 +1,4 @@
-import { Client, type ClientSession } from "eve/client";
+import { Client, type ClientSession, SessionNotActiveError } from "eve/client";
 
 const client = new Client({
   baseUrl: import.meta.env.VITE_AGENT_URL ?? "http://127.0.0.1:3001",
@@ -20,7 +20,8 @@ type Listeners = {
   onText: (text: string) => void;
 };
 
-let session: ClientSession | undefined;
+let session: Promise<ClientSession> | undefined;
+let sending: Promise<unknown> | undefined;
 
 // Tells a pointing result apart from any other tool output on the stream,
 // which reports every call in the same shape.
@@ -58,18 +59,40 @@ function compose(message: string, picture: Picture | null) {
   ];
 }
 
-// Reuses the open conversation or starts one, sending the picture with the
-// message so the agent sees the screen as it was asked about.
+// Starts a conversation the first time and hands back the same one after
+// that, holding the promise so two quick questions never open two of them.
 async function deliver(message: string, picture: Picture | null) {
   const content = compose(message, picture);
 
-  if (session) return session.send(content);
+  if (session) return (await session).send(content);
 
-  const created = await client.sessions.create({ message: content });
+  const created = client.sessions.create({ message: content });
+  const pending = created.then(({ session }) => session);
 
-  session = created.session;
+  // A start that fails late must not wipe out a newer conversation.
+  session = pending;
+  pending.catch(() => {
+    if (session === pending) session = undefined;
+  });
 
-  return created.delivery;
+  return (await created).delivery;
+}
+
+// Sends a message, and starts over once if the agent no longer knows the
+// conversation, for example after it restarted.
+async function send(message: string, picture: Picture | null) {
+  const opened = session;
+
+  try {
+    return await deliver(message, picture);
+  } catch (error) {
+    // A conversation ended in the meantime, by dismissing, stays ended.
+    if (!SessionNotActiveError.is(error) || session !== opened) throw error;
+
+    session = undefined;
+
+    return deliver(message, picture);
+  }
 }
 
 // Asks the agent and reports each word as it arrives, so the cursor can move
@@ -79,7 +102,11 @@ export async function ask(
   picture: Picture | null,
   { onPoint, onText }: Listeners,
 ) {
-  const delivery = await deliver(message, picture);
+  const sent = send(message, picture);
+
+  sending = sent;
+
+  const delivery = await sent;
   let text = "";
 
   for await (const event of delivery.stream()) {
@@ -108,9 +135,24 @@ export async function ask(
   return plain(text);
 }
 
+// Stops the turn that is running, so a new question never has to share it
+// with an answer about a screen that is no longer there.
+export async function stop() {
+  try {
+    // A message still on its way would start its turn after the cancel.
+    await sending?.catch(() => undefined);
+    await (await session)?.cancel();
+  } catch {
+    // A turn that already ended has nothing left to stop.
+  }
+}
+
 // Ends the conversation, so the next question starts fresh and no longer
 // carries what the previous one was about.
 export function reset() {
-  void session?.end();
+  void session?.then(
+    (open) => open.end(),
+    () => undefined,
+  );
   session = undefined;
 }

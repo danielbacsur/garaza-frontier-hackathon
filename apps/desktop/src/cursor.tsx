@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
-import { ask, reset, type Shot } from "./agent";
+import { ask, reset, type Shot, stop } from "./agent";
 import pointer from "./assets/cursor.png";
 
 type Spot = { x: number; y: number };
@@ -99,6 +99,7 @@ function offset(origin: number, tip: number, size: number, mirrored: boolean) {
 export function Cursor() {
   const timer = useRef<number | undefined>(undefined);
   const turn = useRef(0);
+  const busy = useRef(false);
   const resting = useRef(true);
   const here = useRef<Spot | undefined>(undefined);
   const goal = useRef<Spot | undefined>(undefined);
@@ -199,7 +200,16 @@ export function Cursor() {
       setSpeech("");
 
       try {
+        if (busy.current) await stop();
+
+        // A turn replaced or dismissed while waiting must not send anything.
+        if (!isCurrent()) return;
+
+        busy.current = true;
+
         const { generation, picture } = await invoke<Shot>("screen");
+
+        if (!isCurrent()) return;
 
         const reply = await ask(question, picture, {
           onPoint: ({ x, y }) => {
@@ -230,6 +240,8 @@ export function Cursor() {
         void invoke("report", { message: `turn failed: ${error}` });
         setSpeech(FALLBACK);
         linger(FALLBACK);
+      } finally {
+        if (isCurrent()) busy.current = false;
       }
     }
 
@@ -283,6 +295,7 @@ export function Cursor() {
 
     const forgetting = listen("forget", () => {
       turn.current += 1;
+      busy.current = false;
       reset();
     });
 
