@@ -11,15 +11,17 @@ const TICK: Duration = Duration::from_millis(250);
 const PAUSE: Duration = Duration::from_millis(400);
 const SETTLE: Duration = Duration::from_millis(150);
 const MAX_PICTURES: usize = 5;
+const KEEP_LOOKING: Duration = Duration::from_secs(6);
 const GIVE_UP: Duration = Duration::from_secs(5 * 60);
 
 // A task being followed: what the screen looked like when the agent last
-// spoke, when it was last looked at, and when the person last did anything.
+// spoke, when the person last did anything, and when their last action that
+// led to a change happened.
 #[derive(Clone)]
 struct Task {
     baseline: Option<Picture>,
-    checked: Instant,
     acted: Instant,
+    answered: Instant,
 }
 
 #[derive(Default)]
@@ -85,8 +87,8 @@ pub fn watch(app: AppHandle, on: bool) {
 
     *app.state::<Watch>().0.lock().expect("watch lock") = on.then(|| Task {
         baseline,
-        checked: since,
         acted: since,
+        answered: since,
     });
 }
 
@@ -96,7 +98,7 @@ pub fn forget_actions(app: &AppHandle) {
     if let Some(task) =
         app.state::<Watch>().0.lock().expect("watch lock").as_mut()
     {
-        task.checked = Instant::now();
+        task.answered = Instant::now();
     }
 }
 
@@ -127,8 +129,8 @@ fn settled(app_id: i32) -> Option<Picture> {
     Some(picture)
 }
 
-// Hands over the task when the person has acted and then paused since the
-// last look, updating its clock either way, and gives up after a long silence.
+// Hands over the task for a look once the person acted and paused, again and
+// again for a few seconds, since a page can take a while to change after it.
 fn due(app: &AppHandle, now: Instant) -> Option<Task> {
     let state = app.state::<Watch>();
     let mut watch = state.0.lock().expect("watch lock");
@@ -145,14 +147,14 @@ fn due(app: &AppHandle, now: Instant) -> Option<Task> {
         return None;
     }
 
-    let ready =
-        task.acted > task.checked && now.duration_since(task.acted) >= PAUSE;
+    let since = now.duration_since(task.acted);
+    let unanswered = task.acted > task.answered;
+    let ready = unanswered && since >= PAUSE && since <= KEEP_LOOKING;
 
     if !ready {
         return None;
     }
 
-    task.checked = now;
     Some(task.clone())
 }
 
@@ -183,7 +185,10 @@ fn follow(app: AppHandle) {
             continue;
         }
 
-        let Some(Task { baseline, .. }) = due(&app, Instant::now()) else {
+        let Some(Task {
+            baseline, acted, ..
+        }) = due(&app, Instant::now())
+        else {
             continue;
         };
 
@@ -215,6 +220,7 @@ fn follow(app: AppHandle) {
         };
 
         task.baseline = Some(picture.clone());
+        task.answered = acted;
         drop(watch);
 
         if !publish(&app, picture, generation) {
