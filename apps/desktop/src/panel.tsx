@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 
 // Shows the field that travels beside the cursor, refocused on each press of
@@ -7,6 +8,19 @@ import { type FormEvent, useEffect, useRef, useState } from "react";
 export function Panel() {
   const input = useRef<HTMLInputElement>(null);
   const [question, setQuestion] = useState("");
+  const typed = useRef("");
+
+  typed.current = question;
+
+  useEffect(() => {
+    // An empty field left behind would keep trailing the mouse, so it goes
+    // away as soon as focus moves elsewhere with nothing typed.
+    const blurred = getCurrentWindow().onFocusChanged(({ payload }) => {
+      if (!payload && !typed.current.trim()) void invoke("hide_panel");
+    });
+
+    return () => void blurred.then((stop) => stop());
+  }, []);
 
   useEffect(() => {
     const summoned = listen("summoned", () => input.current?.focus());

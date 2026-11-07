@@ -281,6 +281,15 @@ fn screen(state: State<Screen>) -> Shot {
     state.0.lock().expect("screen lock").clone()
 }
 
+// Hides the prompt on its own, for when focus moves away from an empty field,
+// without touching the second cursor or the conversation.
+#[tauri::command]
+fn hide_panel(app: AppHandle) -> tauri::Result<()> {
+    app.get_webview_window("panel")
+        .expect("panel window")
+        .hide()
+}
+
 // Records a problem the windows ran into, since nothing they print reaches a
 // place anyone could read it after the fact.
 #[tauri::command]
@@ -477,6 +486,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             dismiss,
+            hide_panel,
             point,
             release,
             report,
