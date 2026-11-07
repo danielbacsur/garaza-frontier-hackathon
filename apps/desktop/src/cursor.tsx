@@ -3,10 +3,12 @@ import { listen } from "@tauri-apps/api/event";
 import { cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
+import { ask, type Control, reset } from "./agent";
 import pointer from "./assets/cursor.png";
 
 type Spot = { x: number; y: number };
 type Size = { width: number; height: number };
+type Request = Spot & { question: string };
 
 const POINTER_WIDTH = 16;
 const POINTER_SCALE = POINTER_WIDTH / 96;
@@ -25,6 +27,7 @@ const READING_MS_PER_CHARACTER = 45;
 const FADE_MS = 350;
 const SHY_CHECK_MS = 120;
 const SHY_DISTANCE = 28;
+const FALLBACK = "Something went wrong. Please try again.";
 
 // Converts a screen position into the overlay's own coordinates, because
 // macos keeps the window below the menu bar.
@@ -65,6 +68,7 @@ function offset(origin: number, tip: number, size: number, mirrored: boolean) {
 // trailing on a softer spring and fading once the words have been read.
 export function Cursor() {
   const timer = useRef<number | undefined>(undefined);
+  const turn = useRef(0);
   const bubble = useRef<HTMLDivElement>(null);
   const [spot, setSpot] = useState<Spot>();
   const [gliding, setGliding] = useState(false);
@@ -74,28 +78,52 @@ export function Cursor() {
   const [size, setSize] = useState<Size>();
 
   useEffect(() => {
-    const thinking = listen<Spot>("think", async ({ payload }) => {
-      window.clearTimeout(timer.current);
-      setGliding(false);
-      setLeaving(false);
-      setSpeech("");
-      setSpot(await toOverlay(payload));
-    });
-
-    const pointing = listen<Spot>("point", async ({ payload }) => {
-      setGliding(true);
-      setSpot(await toOverlay(payload));
-    });
-
-    const speaking = listen<string>("say", ({ payload }) => {
-      const wait = LINGER_MS + payload.length * READING_MS_PER_CHARACTER;
-
-      setSpeech(payload);
+    // Leaves the bubble up long enough to read, then fades out before the
+    // window hides, so that it never vanishes in the middle of a sentence.
+    function linger(text: string) {
+      const wait = LINGER_MS + text.length * READING_MS_PER_CHARACTER;
 
       timer.current = window.setTimeout(() => {
         setLeaving(true);
         timer.current = window.setTimeout(() => void invoke("rest"), FADE_MS);
       }, wait);
+    }
+
+    const thinking = listen<Request>("think", async ({ payload }) => {
+      const current = ++turn.current;
+      const isCurrent = () => current === turn.current;
+
+      window.clearTimeout(timer.current);
+      setGliding(false);
+      setLeaving(false);
+      setSpeech("");
+      setSpot(await toOverlay(payload));
+
+      try {
+        const elements = await invoke<Control[]>("screen");
+
+        const reply = await ask(payload.question, elements, {
+          onPoint: (elementId) => {
+            if (isCurrent()) void invoke("point", { elementId });
+          },
+
+          onText: (text) => {
+            if (isCurrent()) setSpeech(text);
+          },
+        });
+
+        if (isCurrent()) linger(reply);
+      } catch {
+        if (!isCurrent()) return;
+
+        setSpeech(FALLBACK);
+        linger(FALLBACK);
+      }
+    });
+
+    const pointing = listen<Spot>("point", async ({ payload }) => {
+      setGliding(true);
+      setSpot(await toOverlay(payload));
     });
 
     const resting = listen("rest", () => {
@@ -105,8 +133,13 @@ export function Cursor() {
       setLeaving(false);
     });
 
+    const forgetting = listen("forget", () => {
+      turn.current += 1;
+      reset();
+    });
+
     return () => {
-      for (const listener of [thinking, pointing, speaking, resting]) {
+      for (const listener of [thinking, pointing, resting, forgetting]) {
         void listener.then((stop) => stop());
       }
     };

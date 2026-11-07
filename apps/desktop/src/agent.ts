@@ -5,7 +5,13 @@ const client = new Client({
 });
 
 export type Control = { id: number; role: string; name: string };
-export type Pointer = { elementId: number | null };
+
+type Pointer = { elementId: number | null; say: string };
+
+type Listeners = {
+  onPoint: (elementId: number) => void;
+  onText: (text: string) => void;
+};
 
 let session: ClientSession | undefined;
 
@@ -31,22 +37,40 @@ async function deliver(question: string, elements: Control[]) {
   return created.delivery;
 }
 
-// Asks the agent and calls back as soon as it picks a control, so the cursor
-// can move before the written reply has finished.
+// Asks the agent and reports each word as it arrives, so the cursor can move
+// and start talking long before the whole reply has been written.
 export async function ask(
   question: string,
   elements: Control[],
-  onPoint: (pointer: Pointer) => void,
+  { onPoint, onText }: Listeners,
 ) {
   const delivery = await deliver(question, elements);
+  let text = "";
 
   for await (const event of delivery.stream()) {
+    if (event.type === "content.delta" && event.data.kind === "text") {
+      text += event.data.delta;
+      onText(text);
+    }
+
+    if (event.type === "content.completed" && event.data.kind === "text") {
+      text = String(event.data.value);
+      onText(text);
+    }
+
     if (event.type === "call.settled" && isPointer(event.data.output)) {
-      onPoint(event.data.output);
+      const { elementId, say } = event.data.output;
+
+      if (elementId !== null) onPoint(elementId);
+
+      if (say) {
+        text = say;
+        onText(text);
+      }
     }
   }
 
-  return delivery.result();
+  return text;
 }
 
 // Ends the conversation, so the next question starts fresh and no longer

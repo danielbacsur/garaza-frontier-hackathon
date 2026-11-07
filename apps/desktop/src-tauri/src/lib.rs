@@ -32,6 +32,13 @@ struct Spot {
     y: f64,
 }
 
+#[derive(Clone, Serialize)]
+struct Request {
+    x: f64,
+    y: f64,
+    question: String,
+}
+
 // Finds the monitor under the real cursor, comparing physical pixels because
 // that is the unit the mouse position arrives in.
 fn monitor_under(
@@ -161,10 +168,10 @@ fn cover_monitor(cursor: &WebviewWindow, x: f64, y: f64) -> tauri::Result<()> {
     Ok(())
 }
 
-// Shows the second cursor beside the real one while the agent thinks, and
-// hides the prompt because the conversation moves to the cursor's bubble.
+// Shows the second cursor beside the real one and hands it the question, so
+// the conversation runs in a window that stays on screen.
 #[tauri::command]
-fn think(app: AppHandle) -> tauri::Result<()> {
+fn think(app: AppHandle, question: String) -> tauri::Result<()> {
     let panel = app.get_webview_window("panel").expect("panel window");
     let cursor = app.get_webview_window("cursor").expect("cursor window");
     let mouse = cursor.cursor_position()?;
@@ -183,7 +190,7 @@ fn think(app: AppHandle) -> tauri::Result<()> {
     cover_monitor(&cursor, x, y)?;
     cursor.set_ignore_cursor_events(true)?;
     cursor.show()?;
-    app.emit_to("cursor", "think", Spot { x, y })
+    app.emit_to("cursor", "think", Request { x, y, question })
 }
 
 // Moves the second cursor to a control the agent picked, ignoring ids from
@@ -212,13 +219,6 @@ fn point(
     app.emit_to("cursor", "point", Spot { x, y })
 }
 
-// Puts the agent's answer in the cursor's bubble, wherever the cursor has
-// ended up by the time the reply is ready.
-#[tauri::command]
-fn say(app: AppHandle, text: String) -> tauri::Result<()> {
-    app.emit_to("cursor", "say", text)
-}
-
 // Sends the second cursor away once it has had its say, leaving the prompt
 // alone so that a person typing a follow-up is not interrupted.
 #[tauri::command]
@@ -239,6 +239,7 @@ fn dismiss(app: AppHandle) -> tauri::Result<()> {
         .hide()?;
 
     return_focus(&app);
+    app.emit_to("cursor", "forget", ())?;
     rest(app)
 }
 
@@ -273,7 +274,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            dismiss, point, rest, say, screen, think
+            dismiss, point, rest, screen, think
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
