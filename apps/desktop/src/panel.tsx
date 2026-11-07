@@ -4,89 +4,71 @@ import { type FormEvent, useEffect, useRef, useState } from "react";
 
 import { ask, type Control, reset } from "./agent";
 
+const FALLBACK = "Something went wrong. Please try again.";
+
 // Shows the field that travels beside the cursor, refocused on each press of
 // the hotkey so a person can start typing straight away from any app.
 export function Panel() {
-  const form = useRef<HTMLFormElement>(null);
   const input = useRef<HTMLInputElement>(null);
   const [question, setQuestion] = useState("");
-  const [reply, setReply] = useState("");
-  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     const summoned = listen("summoned", () => input.current?.focus());
     const closing = listen("close", close);
 
-    const fit = new ResizeObserver(([entry]) => {
-      const height = Math.ceil(entry.contentRect.height);
-
-      void invoke("fit_panel", { height });
-    });
-
-    if (form.current) fit.observe(form.current);
-
     return () => {
-      fit.disconnect();
       void summoned.then((stop) => stop());
       void closing.then((stop) => stop());
     };
   }, []);
 
-  // Sends the question with the controls read when the panel opened, and
-  // moves the second cursor as soon as the agent picks one of them.
+  // Hands the question over to the second cursor, which then points at the
+  // control the agent picks and says the reply in its own bubble.
   async function submit(event: FormEvent) {
     event.preventDefault();
 
-    if (!question.trim() || busy) return;
+    if (!question.trim()) return;
 
-    setBusy(true);
-    setReply("");
+    setQuestion("");
 
     try {
       const elements = await invoke<Control[]>("screen");
 
-      const result = await ask(question, elements, ({ elementId, caption }) => {
-        if (elementId !== null) void invoke("point", { elementId, caption });
+      await invoke("think");
+
+      const result = await ask(question, elements, ({ elementId }) => {
+        if (elementId !== null) void invoke("point", { elementId });
       });
 
-      setReply(result.reply ?? "");
-      setQuestion("");
-    } catch (error) {
-      setReply(`Something went wrong: ${String(error)}`);
-    } finally {
-      setBusy(false);
+      void invoke("say", { text: result.reply ?? FALLBACK });
+    } catch {
+      void invoke("say", { text: FALLBACK });
     }
   }
 
   // Ends the conversation and hides everything, which hands focus back to
-  // the app the person was using before the panel opened.
+  // the app the person was using before the prompt opened.
   function close() {
     reset();
-    setReply("");
     setQuestion("");
     void invoke("dismiss");
   }
 
   return (
     <form
-      ref={form}
       className="panel"
       onSubmit={submit}
       onKeyDown={(event) => {
         if (event.key === "Escape") close();
       }}
     >
-      <div className="card">
-        <input
-          ref={input}
-          value={question}
-          placeholder={busy ? "Looking…" : "Ask anything"}
-          onChange={(event) => setQuestion(event.target.value)}
-          autoFocus
-        />
-
-        {reply && <p>{reply}</p>}
-      </div>
+      <input
+        ref={input}
+        value={question}
+        placeholder="Ask anything"
+        onChange={(event) => setQuestion(event.target.value)}
+        autoFocus
+      />
     </form>
   );
 }

@@ -12,14 +12,13 @@ export default defineTool({
 
   inputSchema: z.object({
     target: z.string().min(1).describe("The control, in plain words."),
-    caption: z.string().min(1).describe("A few words shown by the cursor."),
   }),
 
   // Lets jev pick the control from this turn's list, and reports nothing when
   // it is unsure, so that the second cursor never guesses at a position.
-  async execute({ target, caption }, ctx) {
+  async execute({ target }, ctx) {
     const elements = readElements(ctx.messages);
-    const notFound = { elementId: null, caption, confidence: 0 };
+    const notFound = { elementId: null, confidence: 0 };
 
     if (elements.length === 0) return notFound;
 
@@ -62,6 +61,6 @@ export default defineTool({
       return { ...notFound, confidence };
     }
 
-    return { elementId: element.id, caption, confidence };
+    return { elementId: element.id, confidence };
   },
 });

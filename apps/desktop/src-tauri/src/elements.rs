@@ -11,7 +11,7 @@ pub struct Element {
 }
 
 #[cfg(target_os = "macos")]
-pub use macos::read;
+pub use macos::{activate, focused_app_id, read};
 
 // Returns no controls on systems without a reader yet, which leaves the
 // agent able to answer questions but with nothing to point at.
@@ -19,6 +19,18 @@ pub use macos::read;
 pub fn read() -> Vec<Element> {
     Vec::new()
 }
+
+// Reports no focused app on systems without a reader yet, which simply skips
+// handing focus back when the prompt closes.
+#[cfg(not(target_os = "macos"))]
+pub fn focused_app_id() -> Option<i32> {
+    None
+}
+
+// Does nothing on systems without a reader yet, because no app was recorded
+// as focused when the prompt opened.
+#[cfg(not(target_os = "macos"))]
+pub fn activate(_app_id: i32) {}
 
 #[cfg(target_os = "macos")]
 mod macos {
@@ -245,20 +257,10 @@ mod macos {
         unsafe { CFType::wrap_under_create_rule(element as CFTypeRef) }
     }
 
-    // Opens the focused app, and asks it to build its tree if needed, since
-    // chromium and electron only do that when someone requests it.
-    fn focused_app(system: &CFType) -> Option<CFType> {
-        let focused = attribute(system, "AXFocusedApplication")?;
-        let mut pid = 0;
-
-        unsafe {
-            AXUIElementGetPid(
-                focused.as_CFTypeRef() as AXUIElementRef,
-                &mut pid,
-            );
-        }
-
-        let app = owned(unsafe { AXUIElementCreateApplication(pid) });
+    // Opens the app with this id, and asks it to build its tree if needed,
+    // since chromium and electron only do that when someone requests it.
+    fn open_app(app_id: i32) -> CFType {
+        let app = owned(unsafe { AXUIElementCreateApplication(app_id) });
 
         unsafe {
             AXUIElementSetAttributeValue(
@@ -268,7 +270,38 @@ mod macos {
             );
         }
 
-        Some(app)
+        app
+    }
+
+    // Finds which app is in front right now, so focus can go straight back
+    // to it once the prompt has gone away.
+    pub fn focused_app_id() -> Option<i32> {
+        let system = owned(unsafe { AXUIElementCreateSystemWide() });
+        let focused = attribute(&system, "AXFocusedApplication")?;
+        let mut app_id = 0;
+
+        unsafe {
+            AXUIElementGetPid(
+                focused.as_CFTypeRef() as AXUIElementRef,
+                &mut app_id,
+            );
+        }
+
+        Some(app_id)
+    }
+
+    // Brings an app back to the front, because hiding our own windows does
+    // not hand the keyboard back to whatever was in use before.
+    pub fn activate(app_id: i32) {
+        let app = owned(unsafe { AXUIElementCreateApplication(app_id) });
+
+        unsafe {
+            AXUIElementSetAttributeValue(
+                app.as_CFTypeRef() as AXUIElementRef,
+                CFString::new("AXFrontmost").as_concrete_TypeRef(),
+                CFBoolean::true_value().as_CFTypeRef(),
+            );
+        }
     }
 
     // Reads the controls a person could reach in the focused window, clipped
@@ -276,7 +309,7 @@ mod macos {
     pub fn read() -> Vec<Element> {
         let system = owned(unsafe { AXUIElementCreateSystemWide() });
 
-        let Some(app) = focused_app(&system) else {
+        let Some(app) = focused_app_id().map(open_app) else {
             return Vec::new();
         };
 

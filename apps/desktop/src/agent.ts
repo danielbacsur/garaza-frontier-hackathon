@@ -5,7 +5,7 @@ const client = new Client({
 });
 
 export type Control = { id: number; role: string; name: string };
-export type Pointer = { elementId: number | null; caption: string };
+export type Pointer = { elementId: number | null };
 
 let session: ClientSession | undefined;
 

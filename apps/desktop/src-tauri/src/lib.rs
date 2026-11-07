@@ -8,33 +8,37 @@ use elements::Element;
 use serde::Serialize;
 
 use tauri::{
-    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, State,
-    WebviewWindow,
+    AppHandle, Emitter, LogicalPosition, Manager, Monitor, PhysicalPosition,
+    State, WebviewWindow,
 };
 
 use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutState};
 
 const PANEL_GAP: f64 = 18.0;
-const PANEL_WIDTH: f64 = 380.0;
+const CURSOR_GAP: f64 = 28.0;
 const FOLLOW_INTERVAL: Duration = Duration::from_millis(16);
 
-// The controls seen when the panel opened, read before it took focus.
+// The controls seen when the prompt opened, read before it took focus.
 #[derive(Default)]
 struct Screen(Mutex<Vec<Element>>);
 
+// The app that was in front when the prompt opened, which gets focus back.
+#[derive(Default)]
+struct FrontApp(Mutex<Option<i32>>);
+
 #[derive(Clone, Serialize)]
-struct Target {
+struct Spot {
     x: f64,
     y: f64,
-    caption: String,
 }
 
-// Sits the prompt beside the real cursor, and flips it to the other side
-// near a screen edge so that it never slides out of view.
-fn place_panel(panel: &WebviewWindow) -> tauri::Result<()> {
-    let mouse = panel.cursor_position()?;
-
-    let monitor = panel.available_monitors()?.into_iter().find(|monitor| {
+// Finds the monitor under the real cursor, comparing physical pixels because
+// that is the unit the mouse position arrives in.
+fn monitor_under(
+    window: &WebviewWindow,
+    mouse: PhysicalPosition<f64>,
+) -> tauri::Result<Option<Monitor>> {
+    let monitor = window.available_monitors()?.into_iter().find(|monitor| {
         let origin = monitor.position();
         let size = monitor.size();
 
@@ -44,7 +48,15 @@ fn place_panel(panel: &WebviewWindow) -> tauri::Result<()> {
             && mouse.y < origin.y as f64 + size.height as f64
     });
 
-    let Some(monitor) = monitor else {
+    Ok(monitor)
+}
+
+// Sits the prompt beside the real cursor, and flips it to the other side
+// near a screen edge so that it never slides out of view.
+fn place_panel(panel: &WebviewWindow) -> tauri::Result<()> {
+    let mouse = panel.cursor_position()?;
+
+    let Some(monitor) = monitor_under(panel, mouse)? else {
         return Ok(());
     };
 
@@ -101,6 +113,8 @@ fn summon(app: &AppHandle) -> tauri::Result<()> {
     }
 
     *app.state::<Screen>().0.lock().expect("screen lock") = elements::read();
+    *app.state::<FrontApp>().0.lock().expect("front lock") =
+        elements::focused_app_id();
 
     place_panel(&panel)?;
     panel.show()?;
@@ -108,13 +122,14 @@ fn summon(app: &AppHandle) -> tauri::Result<()> {
     app.emit_to("panel", "summoned", ())
 }
 
-// Resizes the prompt to fit its content, because an invisible oversized
-// window beside the cursor would swallow clicks meant for the app below.
-#[tauri::command]
-fn fit_panel(app: AppHandle, height: f64) -> tauri::Result<()> {
-    app.get_webview_window("panel")
-        .expect("panel window")
-        .set_size(LogicalSize::new(PANEL_WIDTH, height))
+// Gives the keyboard back to the app in use before the prompt opened, so
+// that sending a question never interrupts what someone was doing.
+fn return_focus(app: &AppHandle) {
+    let front = *app.state::<FrontApp>().0.lock().expect("front lock");
+
+    if let Some(app_id) = front {
+        elements::activate(app_id);
+    }
 }
 
 // Hands the panel the controls read when it opened, which it sends along
@@ -146,14 +161,38 @@ fn cover_monitor(cursor: &WebviewWindow, x: f64, y: f64) -> tauri::Result<()> {
     Ok(())
 }
 
+// Shows the second cursor beside the real one while the agent thinks, and
+// hides the prompt because the conversation moves to the cursor's bubble.
+#[tauri::command]
+fn think(app: AppHandle) -> tauri::Result<()> {
+    let panel = app.get_webview_window("panel").expect("panel window");
+    let cursor = app.get_webview_window("cursor").expect("cursor window");
+    let mouse = cursor.cursor_position()?;
+
+    panel.hide()?;
+    return_focus(&app);
+
+    let Some(monitor) = monitor_under(&cursor, mouse)? else {
+        return Ok(());
+    };
+
+    let scale = monitor.scale_factor();
+    let x = mouse.x / scale + CURSOR_GAP;
+    let y = mouse.y / scale + CURSOR_GAP;
+
+    cover_monitor(&cursor, x, y)?;
+    cursor.set_ignore_cursor_events(true)?;
+    cursor.show()?;
+    app.emit_to("cursor", "think", Spot { x, y })
+}
+
 // Moves the second cursor to a control the agent picked, ignoring ids from
-// any older snapshot, and lets clicks pass through to the app underneath.
+// any older snapshot, while clicks still pass through to the app beneath it.
 #[tauri::command]
 fn point(
     app: AppHandle,
     state: State<Screen>,
     element_id: usize,
-    caption: String,
 ) -> tauri::Result<()> {
     let center = state
         .0
@@ -170,25 +209,37 @@ fn point(
     let cursor = app.get_webview_window("cursor").expect("cursor window");
 
     cover_monitor(&cursor, x, y)?;
-    cursor.set_ignore_cursor_events(true)?;
-    cursor.show()?;
-    app.emit_to("cursor", "point", Target { x, y, caption })
+    app.emit_to("cursor", "point", Spot { x, y })
 }
 
-// Hides the whole app rather than one window, which is what hands keyboard
-// focus straight back to the app the person came from.
+// Puts the agent's answer in the cursor's bubble, wherever the cursor has
+// ended up by the time the reply is ready.
+#[tauri::command]
+fn say(app: AppHandle, text: String) -> tauri::Result<()> {
+    app.emit_to("cursor", "say", text)
+}
+
+// Sends the second cursor away once it has had its say, leaving the prompt
+// alone so that a person typing a follow-up is not interrupted.
+#[tauri::command]
+fn rest(app: AppHandle) -> tauri::Result<()> {
+    app.get_webview_window("cursor")
+        .expect("cursor window")
+        .hide()?;
+
+    app.emit_to("cursor", "rest", ())
+}
+
+// Closes the prompt and the second cursor together, and hands the keyboard
+// straight back to the app the person came from.
 #[tauri::command]
 fn dismiss(app: AppHandle) -> tauri::Result<()> {
-    let panel = app.get_webview_window("panel").expect("panel window");
-    let cursor = app.get_webview_window("cursor").expect("cursor window");
+    app.get_webview_window("panel")
+        .expect("panel window")
+        .hide()?;
 
-    panel.hide()?;
-    cursor.hide()?;
-
-    #[cfg(target_os = "macos")]
-    app.hide()?;
-
-    Ok(())
+    return_focus(&app);
+    rest(app)
 }
 
 // Starts the app with its global hotkey and runs it as an accessory, which
@@ -210,6 +261,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(shortcuts)
         .manage(Screen::default())
+        .manage(FrontApp::default())
         .setup(|app| {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
@@ -221,7 +273,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            dismiss, fit_panel, point, screen
+            dismiss, point, rest, say, screen, think
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
