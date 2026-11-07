@@ -1,11 +1,12 @@
-import { localDev, placeholderAuth, vercelOidc } from "eve/channels/auth";
 import { eveChannel } from "eve/channels/eve";
 
+import { AUTH, ORIGINS } from "@/agent/lib/access";
+
 export default eveChannel({
-  auth: [vercelOidc(), localDev(), placeholderAuth()],
+  auth: AUTH,
 
   cors: {
-    origin: ["http://localhost:1420", "tauri://localhost"],
+    origin: ORIGINS,
     methods: ["GET", "POST"],
     allowHeaders: ["authorization", "content-type"],
   },

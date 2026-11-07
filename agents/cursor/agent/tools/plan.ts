@@ -1,32 +1,36 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 
-const Step = z.object({
-  title: z.string().min(1).max(80).describe("One requirement, in plain words."),
-  done: z.boolean().describe("Whether the screen shows it is already done."),
+import { Step } from "@/agent/lib/step";
+
+const Plan = z.object({
+  task: z
+    .string()
+    .max(200)
+    .describe("What the user wants done, in a short sentence."),
+  steps: z.array(Step).max(20),
 });
 
 export default defineTool({
   description:
-    "Record every requirement of a task that takes several steps, in order, " +
-    "and mark the ones the screen shows are done. Pass the complete list on " +
-    "every call, or an empty list to drop it. Call it on its own, then " +
-    "point at or describe the next step.",
+    "Record every step of a task that takes several, in order, and mark the " +
+    "ones the screen shows are done. Pass the complete plan on every call, " +
+    "or an empty list of steps to drop it. Call it on its own, then point " +
+    "at the first step that is not done.",
 
-  inputSchema: z.object({ steps: z.array(Step).max(20) }),
+  inputSchema: Plan,
 
-  outputSchema: z.object({
-    steps: z.array(Step),
-    remaining: z.number(),
-  }),
+  outputSchema: Plan.extend({ remaining: z.number() }),
 
-  // Counts what is left, which the desktop app uses to keep following the
-  // task and the model uses to know when to say it is finished.
-  async execute({ steps }) {
-    return { steps, remaining: steps.filter((step) => !step.done).length };
+  // Counts what is left, which the desktop app uses to follow the task step
+  // by step and the model uses to know when to say it is finished.
+  async execute({ task, steps }) {
+    const remaining = steps.filter((step) => !step.done).length;
+
+    return { task, steps, remaining };
   },
 
-  // The list is already in the call's input, so the model only needs to be
+  // The plan is already in the call's input, so the model only needs to be
   // told what comes next rather than given a second copy of every step.
   toModelOutput: ({ steps, remaining }) => ({
     type: "text",
