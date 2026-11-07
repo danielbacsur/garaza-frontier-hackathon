@@ -8,8 +8,8 @@ use crate::capture::{self, Picture};
 use crate::{FrontApp, Screen, journal, publish};
 
 const TICK: Duration = Duration::from_millis(250);
-const PAUSE: Duration = Duration::from_secs(1);
-const SETTLE: Duration = Duration::from_millis(400);
+const PAUSE: Duration = Duration::from_millis(400);
+const SETTLE: Duration = Duration::from_millis(150);
 const MAX_PICTURES: usize = 5;
 const GIVE_UP: Duration = Duration::from_secs(5 * 60);
 
