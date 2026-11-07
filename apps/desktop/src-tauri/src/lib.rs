@@ -1,4 +1,5 @@
 mod capture;
+mod journal;
 
 use std::sync::Mutex;
 use std::thread;
@@ -137,8 +138,10 @@ fn summon(app: &AppHandle) -> tauri::Result<()> {
     }
 
     let front = capture::front_app();
+    let picture = front.and_then(capture::capture);
 
-    publish(app, front.and_then(capture::capture));
+    journal::event(&format!("summon: pictured {}", picture.is_some()));
+    publish(app, picture);
     *app.state::<FrontApp>().0.lock().expect("front lock") = front;
 
     place_panel(&panel)?;
@@ -162,6 +165,13 @@ fn return_focus(app: &AppHandle) {
 #[tauri::command]
 fn screen(state: State<Screen>) -> Shot {
     state.0.lock().expect("screen lock").clone()
+}
+
+// Records a problem the windows ran into, since nothing they print reaches a
+// place anyone could read it after the fact.
+#[tauri::command]
+fn report(message: String) {
+    journal::event(&format!("window error: {message}"));
 }
 
 // Stretches the overlay over the monitor under the target, so that one
@@ -231,8 +241,13 @@ fn point(
     };
 
     let Some((x, y)) = spot else {
+        journal::event(&format!(
+            "point: refused {x:.3},{y:.3} on {generation}"
+        ));
         return Ok(());
     };
+
+    journal::event(&format!("point: {x:.0},{y:.0}"));
 
     let cursor = app.get_webview_window("cursor").expect("cursor window");
 
@@ -274,8 +289,12 @@ pub fn run() {
         .with_shortcut(hotkey)
         .expect("alt+space is a valid shortcut")
         .with_handler(|app, _, event| {
-            if event.state() == ShortcutState::Pressed {
-                summon(app).expect("panel can be shown");
+            if event.state() != ShortcutState::Pressed {
+                return;
+            }
+
+            if let Err(error) = summon(app) {
+                journal::event(&format!("summon failed: {error}"));
             }
         })
         .build();
@@ -288,6 +307,8 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
+            journal::start(app.path().app_log_dir()?);
+
             let handle = app.handle().clone();
 
             thread::spawn(move || follow_cursor(handle));
@@ -295,7 +316,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            dismiss, point, rest, screen, think
+            dismiss, point, report, rest, screen, think
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

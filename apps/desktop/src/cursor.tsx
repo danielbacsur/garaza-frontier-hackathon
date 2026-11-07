@@ -113,8 +113,10 @@ export function Cursor() {
         });
 
         if (isCurrent()) linger(reply);
-      } catch {
+      } catch (error) {
         if (!isCurrent()) return;
+
+        void invoke("report", { message: `turn failed: ${error}` });
 
         setSpeech(FALLBACK);
         linger(FALLBACK);
