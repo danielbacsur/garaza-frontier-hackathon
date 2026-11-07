@@ -13,6 +13,11 @@ export type Shot = { generation: number; picture: Picture | null };
 // A spot on the picture, as parts of its width and height.
 export type Spot = { x: number; y: number };
 
+// The message the app sends on its own once the screen changes, which the
+// agent's instructions quote word for word.
+export const AUTOMATIC =
+  "(The screen changed after the user acted. No message from the user.)";
+
 // The steps of a task, and how many are not done yet.
 export type Plan = {
   steps: { title: string; done: boolean }[];

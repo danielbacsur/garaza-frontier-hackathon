@@ -1,5 +1,6 @@
 mod capture;
 mod journal;
+mod watch;
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -221,6 +222,21 @@ fn publish(app: &AppHandle, picture: Option<Picture>) {
     shot.picture = picture;
 }
 
+// Stores a picture only if no newer one came in while it was being taken,
+// which a slow look by the watcher must never overwrite.
+fn publish_if(app: &AppHandle, picture: Picture, expected: u64) -> bool {
+    let state = app.state::<Screen>();
+    let mut shot = state.0.lock().expect("screen lock");
+
+    if shot.generation != expected {
+        return false;
+    }
+
+    shot.generation += 1;
+    shot.picture = Some(picture);
+    true
+}
+
 // Pictures the screen first and only then shows the prompt, because it would
 // otherwise cover the window in use, and a second press closes it.
 fn summon(app: &AppHandle) -> tauri::Result<()> {
@@ -230,11 +246,16 @@ fn summon(app: &AppHandle) -> tauri::Result<()> {
         return app.emit_to("panel", "close", ());
     }
 
-    let front = capture::front_app();
+    // Our own app can still be in front just after the prompt closed, so the
+    // app in use is the one remembered from the last time instead.
+    let ours = std::process::id() as i32;
+    let remembered = *app.state::<FrontApp>().0.lock().expect("front lock");
+    let front = capture::front_app().filter(|&id| id != ours).or(remembered);
     let picture = front.and_then(capture::capture);
 
     journal::event(&format!("summon: pictured {}", picture.is_some()));
     publish(app, picture);
+    watch::pause(app);
     *app.state::<FrontApp>().0.lock().expect("front lock") = front;
 
     place_panel(&panel)?;
@@ -368,6 +389,8 @@ fn rest(app: AppHandle) -> tauri::Result<()> {
 // straight back to the app the person came from.
 #[tauri::command]
 fn dismiss(app: AppHandle) -> tauri::Result<()> {
+    watch::stop(&app);
+
     app.get_webview_window("panel")
         .expect("panel window")
         .hide()?;
@@ -433,6 +456,7 @@ pub fn run() {
         .manage(Screen::default())
         .manage(FrontApp::default())
         .manage(Pointing::default())
+        .manage(watch::Watch::default())
         .setup(|app| {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
@@ -446,12 +470,20 @@ pub fn run() {
 
             let handle = app.handle().clone();
 
+            watch::start(handle.clone());
             thread::spawn(move || follow_cursor(handle));
 
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            dismiss, point, release, report, rest, screen, think
+            dismiss,
+            point,
+            release,
+            report,
+            rest,
+            screen,
+            think,
+            watch::watch
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

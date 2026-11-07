@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
-import { ask, type Plan, reset, type Shot, stop } from "./agent";
+import { AUTOMATIC, ask, type Plan, reset, type Shot, stop } from "./agent";
 import pointer from "./assets/cursor.png";
 
 type Spot = { x: number; y: number };
@@ -103,12 +103,15 @@ function offset(origin: number, tip: number, size: number, mirrored: boolean) {
 }
 
 // Draws the second cursor with its bubble lined up on the curve beneath it,
-// trailing the mouse while it talks and fading once the words have been read.
+// staying while a task is under way and fading once the words have been read.
 export function Cursor() {
   const timer = useRef<number | undefined>(undefined);
   const turn = useRef(0);
   const busy = useRef(false);
   const resting = useRef(true);
+  const plan = useRef<Plan | undefined>(undefined);
+  const guiding = useRef(false);
+  const said = useRef("");
   const here = useRef<Spot | undefined>(undefined);
   const goal = useRef<Spot | undefined>(undefined);
   const velocity = useRef<Spot>({ x: 0, y: 0 });
@@ -195,9 +198,38 @@ export function Cursor() {
       }, wait);
     }
 
-    // Answers one question about the screen as it was pictured, pointing
-    // where the agent points and talking beside the mouse otherwise.
-    async function run(question: string) {
+    // Says whether a task is still under way, which keeps the cursor on its
+    // spot and the screen watched instead of letting it fade away.
+    const isPlanned = () => (plan.current?.remaining ?? 0) > 0;
+
+    // Holds the cursor in place while a task goes on, and otherwise lets it
+    // fade, watching for one more change right after it pointed somewhere.
+    function settle(reply: string, automatic: boolean, pointed: boolean) {
+      if (isPlanned()) {
+        if (!reply) setSpeech(said.current);
+
+        void invoke("watch", { on: true });
+        return;
+      }
+
+      plan.current = undefined;
+      setStep("");
+      guiding.current = pointed;
+
+      // A follow-up that found nothing to say puts the cursor away quietly
+      // rather than bringing back words that are no longer about the screen.
+      if (automatic && !reply) {
+        void invoke("rest");
+        return;
+      }
+
+      void invoke("watch", { on: pointed });
+      linger(reply || said.current);
+    }
+
+    // Runs one turn with the screen as it is now, whether the person asked
+    // something or the screen changed while a task was under way.
+    async function run(message: string, automatic: boolean) {
       const current = ++turn.current;
       const isCurrent = () => current === turn.current;
       let pointed = false;
@@ -207,6 +239,7 @@ export function Cursor() {
       setMotion("still");
       setLeaving(false);
       setSpeech("");
+      void invoke("watch", { on: false });
 
       try {
         if (busy.current) await stop();
@@ -220,7 +253,7 @@ export function Cursor() {
 
         if (!isCurrent()) return;
 
-        const reply = await ask(question, picture, {
+        const reply = await ask(message, picture, {
           onPoint: ({ x, y }) => {
             if (!isCurrent()) return;
 
@@ -238,19 +271,25 @@ export function Cursor() {
               void invoke("release");
             }
 
+            said.current = text;
             setSpeech(text);
           },
 
-          onPlan: (plan) => {
-            if (isCurrent()) setStep(progress(plan));
+          onPlan: (next) => {
+            if (!isCurrent()) return;
+
+            plan.current = next;
+            setStep(progress(next));
           },
         });
 
-        if (isCurrent()) linger(reply);
+        if (isCurrent()) settle(reply, automatic, pointed);
       } catch (error) {
         if (!isCurrent()) return;
 
         void invoke("report", { message: `turn failed: ${error}` });
+        plan.current = undefined;
+        setStep("");
         setSpeech(FALLBACK);
         linger(FALLBACK);
       } finally {
@@ -265,7 +304,35 @@ export function Cursor() {
 
       resting.current = false;
       put(beside(await toOverlay({ x, y })));
-      void run(question);
+      void run(question, false);
+    });
+
+    // The screen moved on while a task or a pointed step was under way, so
+    // the agent looks again, from beside the mouse if it was put away.
+    const changing = listen("changed", async () => {
+      if (!isPlanned() && !guiding.current) return;
+
+      // A step that was pointed at gets one look, not one after every click.
+      guiding.current = false;
+
+      if (resting.current) {
+        const scale = await overlay.scaleFactor();
+        const { x, y } = (await cursorPosition()).toLogical(scale);
+
+        resting.current = false;
+        put(beside(await toOverlay({ x, y })));
+      }
+
+      void run(AUTOMATIC, true);
+    });
+
+    // The person stopped working on the task, so the cursor says its last
+    // words again and fades as it would after a single question.
+    const abandoning = listen("abandoned", () => {
+      plan.current = undefined;
+      guiding.current = false;
+      setStep("");
+      linger(said.current);
     });
 
     // Moves that arrive after the cursor was sent away belong to a turn that
@@ -295,9 +362,14 @@ export function Cursor() {
     });
 
     // Puts the cursor away once its words have been read, so it is only on
-    // screen while there is something to say.
+    // screen while there is something to say or a task to follow.
     const sleeping = listen("rest", () => {
       resting.current = true;
+
+      // Someone may still be reaching for what was pointed at, so the screen
+      // stays watched for that one step after the cursor has gone.
+      if (!isPlanned() && !guiding.current) void invoke("watch", { on: false });
+
       window.clearTimeout(timer.current);
       goal.current = undefined;
       here.current = undefined;
@@ -309,12 +381,23 @@ export function Cursor() {
     const forgetting = listen("forget", () => {
       turn.current += 1;
       busy.current = false;
+      plan.current = undefined;
+      guiding.current = false;
+      said.current = "";
       setStep("");
       reset();
     });
 
     return () => {
-      const listeners = [asking, pointing, trailing, sleeping, forgetting];
+      const listeners = [
+        asking,
+        changing,
+        abandoning,
+        pointing,
+        trailing,
+        sleeping,
+        forgetting,
+      ];
 
       for (const listener of [...listeners, moving]) {
         void listener.then((stop) => stop());

@@ -30,6 +30,26 @@ pub struct Picture {
 
     #[serde(skip)]
     pub frame: Frame,
+
+    #[serde(skip)]
+    pub thumbnail: Vec<u8>,
+}
+
+const THUMBNAIL: (u32, u32) = (48, 32);
+const CHANGED_LEVEL: u8 = 12;
+
+impl Picture {
+    // Tells whether two pictures show something different, comparing small
+    // grey copies so that noise in the encoding never counts as a change.
+    pub fn differs(&self, other: &Picture) -> bool {
+        self.frame != other.frame
+            || self.thumbnail.len() != other.thumbnail.len()
+            || self
+                .thumbnail
+                .iter()
+                .zip(&other.thumbnail)
+                .any(|(a, b)| a.abs_diff(*b) > CHANGED_LEVEL)
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -80,7 +100,7 @@ mod macos {
         NSApplicationActivationOptions, NSRunningApplication, NSWorkspace,
     };
 
-    use super::{Frame, Picture};
+    use super::{Frame, Picture, THUMBNAIL};
 
     const JPEG_QUALITY: u8 = 80;
     const MIN_SIZE: f64 = 40.0;
@@ -222,6 +242,11 @@ mod macos {
             FilterType::Triangle,
         );
 
+        let thumbnail = scaled
+            .resize_exact(THUMBNAIL.0, THUMBNAIL.1, FilterType::Triangle)
+            .to_luma8()
+            .into_raw();
+
         let mut jpeg = Vec::new();
 
         scaled
@@ -245,13 +270,14 @@ mod macos {
             title: window.title,
             image: STANDARD.encode(jpeg),
             frame: window.frame,
+            thumbnail,
         })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::Frame;
+    use super::{Frame, Picture};
 
     const FRAME: Frame = Frame {
         x: 100.0,
@@ -276,5 +302,25 @@ mod tests {
         assert_eq!(FRAME.place(1.2, 0.5), None);
         assert_eq!(FRAME.place(0.5, -0.1), None);
         assert_eq!(FRAME.place(640.0, 300.0), None);
+    }
+
+    // Counts a change only when part of the picture really looks different,
+    // so tiny differences in shading never wake the agent up.
+    #[test]
+    fn notices_only_real_changes() {
+        let picture = |thumbnail: Vec<u8>| Picture {
+            frame: FRAME,
+            thumbnail,
+            ..Picture::default()
+        };
+
+        let before = picture(vec![100; 8]);
+        let shaded = picture(vec![104; 8]);
+        let mut changed = vec![100; 8];
+
+        changed[3] = 180;
+
+        assert!(!before.differs(&shaded));
+        assert!(before.differs(&picture(changed)));
     }
 }
