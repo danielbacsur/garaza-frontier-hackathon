@@ -401,6 +401,17 @@ fn think(app: AppHandle, question: String) -> tauri::Result<()> {
     app.state::<Pointing>().0.store(false, Ordering::Relaxed);
     *app.state::<Clicked>().0.lock().expect("click lock") = None;
 
+    // Typing the question went to the prompt, not the window, so the picture
+    // taken when it opened is as good as one taken now.
+    {
+        let state = app.state::<Screen>();
+        let mut shot = state.0.lock().expect("screen lock");
+
+        if !shot.pending {
+            shot.taken = Some(Instant::now());
+        }
+    }
+
     if cover_display(&cursor, (x, y))?.is_none() {
         journal::event("think: no display under the mouse");
         return Ok(());
