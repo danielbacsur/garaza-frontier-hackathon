@@ -39,6 +39,7 @@ type Pointer = {
   y: number | null;
   say: string;
   step: number | null;
+  plan: Plan | null;
 };
 
 type Listeners = {
@@ -249,7 +250,10 @@ export async function ask(
         if (outcome !== "completed") break;
 
         if (tools.get(callId) === "point_at") {
-          const { x, y, step, say: words } = output as Pointer;
+          const { x, y, step, plan, say: words } = output as Pointer;
+
+          // A task starting now brings its plan along with the pointer.
+          if (plan) onPlan(plan);
 
           // Words without a spot are about something out of view.
           if (x !== null && y !== null) onPoint({ x, y, step });
