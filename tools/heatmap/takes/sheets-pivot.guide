@@ -1,0 +1,55 @@
+# Google Sheets with the second cursor: someone asks how to make a pivot table of invoices by
+# customer, and the second cursor shows each step while they take it. Starts on a sheet with the
+# invoices already pasted in and only A1 selected, the app running with VITE_DEMO set.
+rest 1500
+key alt+space
+rest 900
+write How do I make a pivot table of invoices by customer?
+rest 600
+key return
+cursor think
+rest 900
+cursor point 311 200 Open the Insert menu.
+rest 800
+click 311 200
+rest 400
+cursor point 364 610 Choose Pivot table.
+rest 800
+click 364 610
+cursor think
+rest 700
+cursor point 866 721 Keep New sheet and click Create.
+rest 800
+click 866 721
+cursor think
+rest 1900
+cursor point 1087 726 Next to Rows, click Add.
+rest 800
+click 1087 726
+rest 400
+cursor point 1123 500 Pick Customer.
+rest 800
+click 1123 500
+cursor think
+rest 700
+cursor say Scroll down in the editor to Values.
+rest 900
+move 1010 640
+scroll -8
+cursor think
+rest 500
+cursor point 1087 756 Next to Values, click Add.
+rest 800
+click 1087 756
+rest 400
+cursor point 1132 678 Pick Gross (HUF).
+rest 800
+click 1132 678
+cursor think
+rest 900
+cursor done Done: every customer, with their total gross.
+rest 1200
+move 420 520
+rest 2500
+move 560 720
+rest 6000

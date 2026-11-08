@@ -123,6 +123,10 @@ body,
   border-radius: 14px 14px 4px;
 }
 
+.bubble.done {
+  background: #16a34aeb;
+}
+
 .bubble.shy {
   opacity: 0.12;
 }

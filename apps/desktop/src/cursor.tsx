@@ -19,6 +19,7 @@ import {
   stop,
 } from "./agent";
 import pointer from "./assets/cursor.png";
+import { demoing, nextStep } from "./demo";
 
 type Spot = { x: number; y: number };
 type Size = { width: number; height: number };
@@ -167,6 +168,7 @@ export function Cursor() {
   const nudged = useRef(false);
   const request = useRef("");
   const said = useRef("");
+  const held = useRef(false);
   const here = useRef<Spot | undefined>(undefined);
   const goal = useRef<Spot | undefined>(undefined);
   const velocity = useRef<Spot>({ x: 0, y: 0 });
@@ -178,6 +180,7 @@ export function Cursor() {
   const [speech, setSpeech] = useState("");
   const [leaving, setLeaving] = useState(false);
   const [shy, setShy] = useState(false);
+  const [finished, setFinished] = useState(false);
   const [size, setSize] = useState<Size>();
 
   useEffect(() => {
@@ -477,6 +480,44 @@ export function Cursor() {
       }
     }
 
+    // Plays a scripted run instead of asking the agent: each step points,
+    // speaks beside the mouse, thinks, or ends the run, when it is due.
+    async function play() {
+      for (;;) {
+        const step = await nextStep();
+
+        if ("think" in step) {
+          setFinished(false);
+          setMotion("still");
+          setSpeech("");
+          continue;
+        }
+
+        // A finished task comes back beside the mouse and says so in green.
+        if ("done" in step) {
+          held.current = false;
+          setFinished(true);
+          setMotion("gliding");
+          put(beside(await toOverlay(await mouseInPoints())));
+          said.current = step.say ?? said.current;
+          setSpeech(said.current);
+          linger(said.current);
+          return;
+        }
+
+        // A spot is held until the next step, like one the agent pointed at.
+        held.current = "x" in step;
+
+        if ("x" in step) {
+          setMotion("gliding");
+          put(await toOverlay(step));
+        }
+
+        said.current = step.say;
+        setSpeech(step.say);
+      }
+    }
+
     // Appears just below and to the right of the mouse to take a question,
     // whether or not the mouse is moving at the time.
     const asking = listen<Request>("think", async ({ payload }) => {
@@ -487,7 +528,10 @@ export function Cursor() {
       lastClick.current = undefined;
       request.current = question;
       put(beside(await toOverlay({ x, y })));
-      void run(question, false);
+      setFinished(false);
+
+      if (demoing) void play();
+      else void run(question, false);
     });
 
     // The screen moved on while a task, a pointed step or an answer was under
@@ -551,7 +595,7 @@ export function Cursor() {
     // Trails the mouse whenever there is nothing to point at, resting just
     // beside it like a companion.
     const trailing = listen<Spot>("mouse", ({ payload }) => {
-      if (resting.current) return;
+      if (resting.current || held.current) return;
 
       goal.current = beside({
         x: payload.x - origin.current.x,
@@ -566,6 +610,7 @@ export function Cursor() {
     // screen while there is something to say or a task to follow.
     const sleeping = listen("rest", () => {
       resting.current = true;
+      held.current = false;
 
       // Someone may still be reaching for what was pointed at, so the screen
       // stays watched for that one step after the cursor has gone.
@@ -653,6 +698,7 @@ export function Cursor() {
     flipX && "flip-x",
     flipY && "flip-y",
     shy && "shy",
+    finished && "done",
   ];
 
   return (

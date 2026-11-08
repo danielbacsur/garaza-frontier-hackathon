@@ -2,7 +2,7 @@
 // records it: the same motion as human.mjs (a slight curve, minimum-jerk speed, an overshoot on long
 // reaches, a resting drift), posted as system events. Needs Accessibility permission.
 //
-//   hand <script>      one command per line; "-" reads them from stdin
+//   hand <script>      one command per line; "-" reads them from stdin, printing "ok" after each
 //
 // Commands, in screen points from the top left (as screenshots show them):
 //   move X Y             glide to a point
@@ -10,6 +10,7 @@
 //   dclick X Y           glide there, double-click
 //   rest MS              hold still (with drift) for a while
 //   type TEXT            type the rest of the line, a key at a time
+//   write TEXT           type it at a person's pace, pausing a little between words
 //   key COMBO            press a key, e.g. return, tab, esc, down, cmd+l, cmd+v, shift+tab
 //   scroll DY            scroll by DY lines at the pointer (negative is down)
 //   # …                  a comment
@@ -142,6 +143,14 @@ func type(_ text: String) {
   }
 }
 
+/// Typing as someone composing a question does: slower, unevenly, with a beat between words.
+func write(_ text: String) {
+  for ch in text {
+    type(String(ch))
+    sleep(ms: ch == " " ? rand(40, 110) : rand(0, 35))
+  }
+}
+
 func scroll(_ lines: Int32) {
   // A wheel turns a notch at a time.
   for _ in 0..<abs(lines) {
@@ -165,6 +174,7 @@ func run(_ line: String) {
   case "dclick": click(at: CGPoint(x: numbers[0], y: numbers[1]), count: 2)
   case "rest": rest(ms: numbers[0])
   case "type": type(args)
+  case "write": write(args)
   case "key": press(args)
   case "scroll": scroll(Int32(numbers[0]))
   default: print("unknown command: \(trimmed)")
@@ -178,4 +188,9 @@ guard CommandLine.arguments.count == 2 else {
 let source = CommandLine.arguments[1] == "-"
   ? AnyIterator { readLine() }
   : AnyIterator((try! String(contentsOfFile: CommandLine.arguments[1], encoding: .utf8)).split(separator: "\n").map(String.init).makeIterator())
-for line in source { run(line) }
+// Read from stdin, each command is acknowledged once done, so whoever feeds it can wait for it.
+let acknowledge = CommandLine.arguments[1] == "-"
+for line in source {
+  run(line)
+  if acknowledge { print("ok") }
+}
