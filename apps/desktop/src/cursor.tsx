@@ -279,16 +279,19 @@ export function Cursor() {
       }
 
       plan.current = undefined;
-      guiding.current = pointed;
 
       // A follow-up that found nothing to say puts the cursor away quietly
       // rather than bringing back words that are no longer about the screen.
       if (automatic && !reply) {
+        guiding.current = false;
         void invoke("rest");
         return;
       }
 
-      void invoke("watch", { on: pointed, idle: false });
+      // One more look follows any answer, whether it pointed or only spoke,
+      // so a page said to be loading is looked at again once it has loaded.
+      guiding.current = true;
+      void invoke("watch", { on: true, idle: false });
       linger(reply || said.current);
     }
 
