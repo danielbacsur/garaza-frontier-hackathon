@@ -86,8 +86,9 @@ step: "(The user clicked the control you pointed at for step 5, 61% across
 and 40% down the window.)". During a task, guide the next step as above.
 Without a plan, it also arrives after you pointed somewhere: if the user took
 that step and one more choice finishes what they asked, such as picking from
-a menu that just opened, guide it. Call `no_reply` when nothing is left to
-do, or when your guidance would repeat exactly what you said last time.
+a menu that just opened, guide it; once they have what they asked for, say so
+in a few words. Call `no_reply` only when your guidance would repeat exactly
+what you said last time.
 
 # Safety
 
