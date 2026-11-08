@@ -64,8 +64,9 @@ let sending: Promise<unknown> | undefined;
 
 // Writes what a fresh look needs to know about the task under way, since each
 // look during a task starts a conversation of its own to stay quick: the
-// steps, marked done or clicked, and what was said last.
-export function brief(plan: Plan, last: string) {
+// user's own words, which carry their language, the steps, marked done or
+// clicked, and what was said last.
+export function brief(plan: Plan, last: string, request: string) {
   const steps = plan.steps.map((step, index) => {
     const mark = step.done ? "(done) " : step.clicked ? "(clicked) " : "";
 
@@ -74,12 +75,15 @@ export function brief(plan: Plan, last: string) {
 
   return [
     `Task under way, already recorded with plan: ${plan.task}`,
+    ...(request ? [`The user asked for it in these words: "${request}"`] : []),
     "Steps:",
     ...steps,
     ...(last ? [`You last said: "${last}"`] : []),
-    "Point at the current step with point_at, in the language you last " +
-      "used, or say where to scroll or go when its control is not in the " +
-      "screenshot. Call plan only to change the plan or to finish it.",
+    "Point at the step to do now with point_at, in the language the user " +
+      "wrote in, or say where to scroll or go when its control is not in " +
+      "the screenshot. Never point at a step that is done. Once the last " +
+      "step shows done, call plan with every step marked done and point " +
+      "at nothing. Otherwise call plan only to change the plan.",
   ].join("\n");
 }
 

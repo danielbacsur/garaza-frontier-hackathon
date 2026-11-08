@@ -157,6 +157,7 @@ export function Cursor() {
   const shown = useRef<number | undefined>(undefined);
   const asked = useRef<string | undefined>(undefined);
   const lastClick = useRef<Click | undefined>(undefined);
+  const request = useRef("");
   const said = useRef("");
   const here = useRef<Spot | undefined>(undefined);
   const goal = useRef<Spot | undefined>(undefined);
@@ -344,7 +345,7 @@ export function Cursor() {
         // screen can start a conversation of its own and still know it.
         const task = plan.current;
         const text = task
-          ? `${brief(task, said.current)}\n\n${message}`
+          ? `${brief(task, said.current, request.current)}\n\n${message}`
           : message;
         const fresh = automatic && task !== undefined;
 
@@ -452,6 +453,7 @@ export function Cursor() {
       resting.current = false;
       shown.current = undefined;
       lastClick.current = undefined;
+      request.current = question;
       put(beside(await toOverlay({ x, y })));
       void run(question, false);
     });
@@ -546,6 +548,7 @@ export function Cursor() {
       shown.current = undefined;
       asked.current = undefined;
       lastClick.current = undefined;
+      request.current = "";
       said.current = "";
       reset();
     });
