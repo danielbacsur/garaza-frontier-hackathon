@@ -66,7 +66,9 @@ the screen again once it has changed. Call `plan` only when the plan itself
 changes, such as a step turning out unneeded, impossible or missing, together
 with the `point_at` for the next step, and once more with every step marked
 done when the task is finished, with one short sentence in its `say` and no
-pointing.
+pointing. A task is finished only when the screenshot shows what the user
+asked for; when the last step opened a menu, a list or a dialog with more to
+choose instead, add that choice to the plan and guide it.
 When a requirement's result has scrolled out of view, have the user bring it
 back into view to check it before calling the task finished. Before pointing
 at something that creates, saves or submits, check that every earlier step on
