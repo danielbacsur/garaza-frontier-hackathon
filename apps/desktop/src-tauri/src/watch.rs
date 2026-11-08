@@ -8,10 +8,10 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::capture::{self, Picture};
 use crate::{Clicked, FrontApp, Screen, journal, publish};
 
-const TICK: Duration = Duration::from_millis(250);
-const LOOK: Duration = Duration::from_secs(1);
-const PAUSE: Duration = Duration::from_millis(600);
-const SETTLE: Duration = Duration::from_millis(250);
+const TICK: Duration = Duration::from_millis(100);
+const LOOK: Duration = Duration::from_millis(300);
+const PAUSE: Duration = Duration::from_millis(250);
+const SETTLE: Duration = Duration::from_millis(120);
 const MAX_PICTURES: usize = 5;
 const KEEP_LOOKING: Duration = Duration::from_secs(10);
 const MAX_REPORTS: u8 = 2;
