@@ -140,6 +140,7 @@ export function Cursor() {
   const resting = useRef(true);
   const plan = useRef<Plan | undefined>(undefined);
   const guiding = useRef(false);
+  const retried = useRef(false);
   const said = useRef("");
   const here = useRef<Spot | undefined>(undefined);
   const goal = useRef<Spot | undefined>(undefined);
@@ -237,8 +238,9 @@ export function Cursor() {
     // fade, watching for one more change right after it pointed somewhere.
     function settle(reply: string, automatic: boolean, pointed: boolean) {
       if (isPlanned()) {
-        // A plan that arrived on its own gets its first pointer at once.
-        if (!pointed && !reply && !automatic) {
+        // A plan that arrived on its own gets one more look for a pointer.
+        if (!pointed && !reply && !retried.current) {
+          retried.current = true;
           void run(AUTOMATIC, true);
           return;
         }
@@ -399,6 +401,7 @@ export function Cursor() {
 
       // A step that was pointed at gets one look, not one after every click.
       guiding.current = false;
+      retried.current = false;
 
       if (resting.current) {
         resting.current = false;

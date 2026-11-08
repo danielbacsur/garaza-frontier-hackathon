@@ -57,10 +57,12 @@ export function brief(plan: Plan, last: string) {
   );
 
   return [
-    `Task under way: ${plan.task}`,
+    `Task under way, already recorded with plan: ${plan.task}`,
     "Steps:",
     ...steps,
     ...(last ? [`You last said: "${last}"`] : []),
+    "Point at the current step with point_at, in the language you last " +
+      "used. Call plan only to change the plan or to finish it.",
   ].join("\n");
 }
 
