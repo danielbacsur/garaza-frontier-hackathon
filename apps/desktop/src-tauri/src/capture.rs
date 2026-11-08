@@ -87,11 +87,7 @@ pub fn capture(_app_id: i32) -> Option<Picture> {
 
 #[cfg(target_os = "macos")]
 mod macos {
-    use std::fs;
     use std::io::Cursor;
-    use std::path::PathBuf;
-    use std::process::Command;
-    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use base64::Engine;
     use base64::engine::general_purpose::STANDARD;
@@ -100,13 +96,16 @@ mod macos {
     use core_foundation::number::CFNumber;
     use core_foundation::string::CFString;
     use core_graphics::window::{
-        copy_window_info, kCGNullWindowID, kCGWindowBounds, kCGWindowLayer,
-        kCGWindowListExcludeDesktopElements, kCGWindowListOptionOnScreenOnly,
+        copy_window_info, create_image, kCGNullWindowID, kCGWindowBounds,
+        kCGWindowImageBoundsIgnoreFraming, kCGWindowImageNominalResolution,
+        kCGWindowLayer, kCGWindowListExcludeDesktopElements,
+        kCGWindowListOptionIncludingWindow, kCGWindowListOptionOnScreenOnly,
         kCGWindowName, kCGWindowNumber, kCGWindowOwnerPID,
     };
-    use core_graphics_types::geometry::CGRect;
+    use core_graphics_types::geometry::{CGPoint, CGRect, CGSize};
     use image::codecs::jpeg::JpegEncoder;
     use image::imageops::FilterType;
+    use image::{DynamicImage, RgbImage};
     use objc2_app_kit::{
         NSApplicationActivationOptions, NSRunningApplication, NSWorkspace,
     };
@@ -115,6 +114,10 @@ mod macos {
 
     const JPEG_QUALITY: u8 = 80;
     const MIN_SIZE: f64 = 40.0;
+
+    // How much smaller than the window its picture is sent, since the model
+    // charges by the pixel and still points as well at three quarters.
+    const SCALE: f64 = 0.75;
 
     // A window as the window server lists it, which is enough to picture it
     // and to place things on it without asking the app itself.
@@ -212,44 +215,47 @@ mod macos {
         })
     }
 
-    // Picks a file of its own for each picture, since the prompt and the
-    // watcher can both be looking at the screen at the same moment.
-    fn picture_path() -> PathBuf {
-        static NEXT: AtomicUsize = AtomicUsize::new(0);
+    // Pictures one window alone, in process and at one pixel per point, so
+    // nothing is written to disk and the model sees what a person sees.
+    fn shoot(window: u32) -> Option<RgbImage> {
+        let whole = CGRect::new(
+            &CGPoint::new(f64::INFINITY, f64::INFINITY),
+            &CGSize::new(0.0, 0.0),
+        );
 
-        let next = NEXT.fetch_add(1, Ordering::Relaxed);
+        let image = create_image(
+            whole,
+            kCGWindowListOptionIncludingWindow,
+            window,
+            kCGWindowImageBoundsIgnoreFraming | kCGWindowImageNominalResolution,
+        )?;
 
-        std::env::temp_dir()
-            .join(format!("second-cursor-{}-{next}.png", std::process::id()))
+        let (width, height) = (image.width(), image.height());
+        let stride = image.bytes_per_row();
+        let data = image.data();
+        let mut rgb = Vec::with_capacity(width * height * 3);
+
+        // The window server hands over rows of BGRA pixels, padded at the end.
+        for row in data.bytes().chunks(stride).take(height) {
+            for pixel in row[..width * 4].chunks_exact(4) {
+                rgb.extend_from_slice(&[pixel[2], pixel[1], pixel[0]]);
+            }
+        }
+
+        RgbImage::from_raw(width as u32, height as u32, rgb)
     }
 
-    // Pictures one window alone, leaving out any window above it, ours too,
-    // and deletes the file straight away once it has been read.
-    fn shoot(window: u32) -> Option<Vec<u8>> {
-        let path = picture_path();
-
-        let captured = Command::new("/usr/sbin/screencapture")
-            .args(["-x", "-o", "-t", "png", "-l", &window.to_string()])
-            .arg(&path)
-            .status()
-            .is_ok_and(|status| status.success());
-
-        let bytes = captured.then(|| fs::read(&path).ok()).flatten();
-        let _ = fs::remove_file(&path);
-
-        bytes
-    }
-
-    // Pictures the window in use, at one pixel per point so that the model
-    // sees what a person sees without paying for a retina copy of it.
+    // Pictures the window in use, scaled down for the model, with a small
+    // grey copy kept for telling pictures apart.
     pub fn capture(app_id: i32) -> Option<Picture> {
         let window = front_window(app_id)?;
-        let png = shoot(window.id)?;
-        let full = image::load_from_memory(&png).ok()?;
+        let full = shoot(window.id)?;
+        let width = (f64::from(full.width()) * SCALE).round() as u32;
+        let height = (f64::from(full.height()) * SCALE).round() as u32;
 
-        let scaled = full.resize_exact(
-            window.frame.width.round() as u32,
-            window.frame.height.round() as u32,
+        let scaled = DynamicImage::ImageRgb8(full).resize_exact(
+            width,
+            height,
             FilterType::Triangle,
         );
 
