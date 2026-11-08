@@ -30,17 +30,37 @@ export type Plan = {
   remaining: number;
 };
 
-type Pointer = Spot & { say: string };
+// Where the agent pointed, with the number of the task step it was for.
+export type Pointed = Spot & { step: number | null };
+
+type Pointer = Pointed & { say: string };
 
 type Listeners = {
-  onPoint: (spot: Spot) => void;
+  onPoint: (spot: Pointed) => void;
   onText: (text: string) => void;
   onPlan: (plan: Plan) => void;
   onRestart: () => void;
 };
 
 let session: Promise<ClientSession> | undefined;
+let aside: Promise<ClientSession> | undefined;
 let sending: Promise<unknown> | undefined;
+
+// Writes what a fresh look needs to know about the task under way, since each
+// look during a task starts a conversation of its own to stay quick.
+export function brief(plan: Plan, last: string) {
+  const steps = plan.steps.map(
+    (step, index) =>
+      `${index + 1}. ${step.done ? "(done) " : ""}${step.instruction}`,
+  );
+
+  return [
+    `Task under way: ${plan.task}`,
+    "Steps:",
+    ...steps,
+    ...(last ? [`You last said: "${last}"`] : []),
+  ].join("\n");
+}
 
 // Removes the markdown models sometimes add anyway, because the bubble shows
 // plain text and stray symbols would read as noise.
@@ -92,16 +112,31 @@ async function deliver(message: string, picture: Picture | null) {
   return (await created).delivery;
 }
 
+// Starts a conversation for this one message alone, which keeps a look at
+// the screen during a task to a few thousand tokens however long it goes on.
+async function deliverAside(message: string, picture: Picture | null) {
+  const created = client.sessions.create({
+    message: compose(message, picture),
+  });
+
+  aside = created.then(({ session }) => session);
+
+  return (await created).delivery;
+}
+
 // Sends a message, and starts over once if the agent no longer knows the
 // conversation, for example after it restarted, saying so to the caller.
 async function send(
   message: string,
   picture: Picture | null,
   onRestart: () => void,
+  fresh: boolean,
 ) {
   const opened = session;
 
   try {
+    if (fresh) return await deliverAside(message, picture);
+
     return await deliver(message, picture);
   } catch (error) {
     // A conversation ended in the meantime, by dismissing, stays ended.
@@ -120,8 +155,9 @@ export async function ask(
   message: string,
   picture: Picture | null,
   { onPoint, onText, onPlan, onRestart }: Listeners,
+  fresh = false,
 ) {
-  const sent = send(message, picture, onRestart);
+  const sent = send(message, picture, onRestart, fresh);
 
   sending = sent;
 
@@ -168,9 +204,9 @@ export async function ask(
         if (outcome !== "completed") break;
 
         if (tools.get(callId) === "point_at") {
-          const { x, y, say: words } = output as Pointer;
+          const { x, y, step, say: words } = output as Pointer;
 
-          onPoint({ x, y });
+          onPoint({ x, y, step });
           if (words) say(words);
         }
 
@@ -187,6 +223,15 @@ export async function ask(
     }
   }
 
+  // A conversation made for one look is over once it has been read.
+  if (fresh) {
+    void aside?.then(
+      (open) => open.end(),
+      () => undefined,
+    );
+    aside = undefined;
+  }
+
   return plain(text);
 }
 
@@ -196,6 +241,7 @@ export async function stop() {
   try {
     // A message still on its way would start its turn after the cancel.
     await sending?.catch(() => undefined);
+    await (await aside)?.cancel();
     await (await session)?.cancel();
   } catch {
     // A turn that already ended has nothing left to stop.

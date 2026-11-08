@@ -10,6 +10,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   AUTOMATIC,
   ask,
+  brief,
   LimitReached,
   type Plan,
   reset,
@@ -282,50 +283,73 @@ export function Cursor() {
 
         if (!isCurrent()) return;
 
-        const reply = await ask(message, picture, {
-          onPoint: async ({ x, y }) => {
-            if (!isCurrent()) return;
+        // A task is written above every message, so that a look at the
+        // screen can start a conversation of its own and still know it.
+        const task = plan.current;
+        const text = task
+          ? `${brief(task, said.current)}\n\n${message}`
+          : message;
+        const fresh = automatic && task !== undefined;
 
-            // Counted at once, since the words follow straight after, and
-            // taken back if the spot was on a picture that is out of date.
-            pointed = true;
+        const reply = await ask(
+          text,
+          picture,
+          {
+            onPoint: async ({ x, y, step }) => {
+              if (!isCurrent()) return;
 
-            const used = await invoke<boolean>("point", {
-              x,
-              y,
-              generation,
-            });
+              // Counted at once, since the words follow straight after, and
+              // taken back if the spot was on a picture that is out of date.
+              pointed = true;
 
-            if (!used) pointed = false;
+              // Pointing at a step means the ones before it were seen done.
+              if (step && plan.current) {
+                const steps = plan.current.steps.map((s, index) =>
+                  index < step - 1 ? { ...s, done: true } : s,
+                );
+                const remaining = steps.filter((s) => !s.done).length;
+
+                plan.current = { ...plan.current, steps, remaining };
+              }
+
+              const used = await invoke<boolean>("point", {
+                x,
+                y,
+                generation,
+              });
+
+              if (!used) pointed = false;
+            },
+
+            onText: (text) => {
+              if (!isCurrent()) return;
+
+              // Words about something other than a spot are said beside the
+              // mouse rather than on whatever was pointed at before.
+              if (!pointed && !released) {
+                released = true;
+                void invoke("release");
+              }
+
+              said.current = text;
+              setSpeech(text);
+            },
+
+            // The agent forgot the conversation, and with it any task.
+            onRestart: () => {
+              if (!isCurrent()) return;
+
+              plan.current = undefined;
+            },
+
+            onPlan: (next) => {
+              if (!isCurrent()) return;
+
+              plan.current = next;
+            },
           },
-
-          onText: (text) => {
-            if (!isCurrent()) return;
-
-            // Words about something other than a spot are said beside the
-            // mouse rather than on whatever was pointed at before.
-            if (!pointed && !released) {
-              released = true;
-              void invoke("release");
-            }
-
-            said.current = text;
-            setSpeech(text);
-          },
-
-          // The agent forgot the conversation, and with it any task.
-          onRestart: () => {
-            if (!isCurrent()) return;
-
-            plan.current = undefined;
-          },
-
-          onPlan: (next) => {
-            if (!isCurrent()) return;
-
-            plan.current = next;
-          },
-        });
+          fresh,
+        );
 
         if (isCurrent()) settle(reply, automatic, pointed);
       } catch (error) {

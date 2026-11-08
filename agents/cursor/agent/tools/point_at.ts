@@ -18,13 +18,24 @@ export default defineTool({
     x: Fraction.describe("How far across the screenshot, from 0 to 1."),
     y: Fraction.describe("How far down the screenshot, from 0 to 1."),
     say: z.string().min(1).describe("Your reply, shown in the speech bubble."),
+    step: z
+      .number()
+      .int()
+      .min(1)
+      .optional()
+      .describe("During a task, the number of the step this spot is for."),
   }),
 
-  outputSchema: z.object({ x: Fraction, y: Fraction, say: z.string() }),
+  outputSchema: z.object({
+    x: Fraction,
+    y: Fraction,
+    say: z.string(),
+    step: z.number().nullable(),
+  }),
 
   // Hands the spot back as given, since the desktop app knows where the
   // pictured window sits and places the second cursor there.
-  async execute({ x, y, say }) {
-    return { x, y, say };
+  async execute({ x, y, say, step }) {
+    return { x, y, say, step: step ?? null };
   },
 });
