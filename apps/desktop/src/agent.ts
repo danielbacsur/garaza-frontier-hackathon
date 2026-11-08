@@ -33,6 +33,7 @@ export class LimitReached extends Error {}
 // clicked since the agent last looked, and how many are not done yet.
 export type Plan = {
   task: string;
+  language?: string;
   requirements: string[];
   steps: { instruction: string; done: boolean; clicked?: boolean }[];
   say?: string;
@@ -73,17 +74,25 @@ export function brief(plan: Plan, last: string, request: string) {
     return `${index + 1}. ${mark}${step.instruction}`;
   });
 
+  // The user's own words come first, and the language they wrote in is
+  // named as the plan recorded it, so that a fresh look answers in it
+  // whatever language the screen shows.
+  const language = plan.language
+    ? `in ${plan.language}`
+    : "in the language the user wrote in above";
+
   return [
-    `Task under way, already recorded with plan: ${plan.task}`,
-    ...(request ? [`The user asked for it in these words: "${request}"`] : []),
+    ...(request ? [request, ""] : []),
+    `(The user asked that earlier, and the task is under way, already ` +
+      `recorded with plan: ${plan.task})`,
     "Steps:",
     ...steps,
     ...(last ? [`You last said: "${last}"`] : []),
-    "Point at the step to do now with point_at, in the language the user " +
-      "wrote in, or say where to scroll or go when its control is not in " +
-      "the screenshot. Never point at a step that is done. Once the last " +
-      "step shows done, call plan with every step marked done and point " +
-      "at nothing. Otherwise call plan only to change the plan.",
+    `Point at the step to do now with point_at, ${language}, or say ` +
+      "where to scroll or go when its control is not in the screenshot. " +
+      "Never point at a step that is done. Once the last step shows done, " +
+      "call plan with every step marked done and point at nothing. " +
+      "Otherwise call plan only to change the plan.",
   ].join("\n");
 }
 

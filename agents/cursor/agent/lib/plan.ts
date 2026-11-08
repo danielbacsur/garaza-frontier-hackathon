@@ -18,6 +18,13 @@ export const Plan = z.object({
     .string()
     .max(200)
     .describe("What the user wants done, in a short sentence."),
+  language: z
+    .string()
+    .max(40)
+    .describe(
+      "The language the user wrote their request in, named in English, " +
+        "such as English or Hungarian, whatever language the screen is in.",
+    ),
   requirements: z
     .array(z.string().max(80))
     .max(10)
