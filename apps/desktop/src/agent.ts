@@ -148,15 +148,17 @@ async function deliver(message: string, picture: Picture | null) {
 }
 
 // Starts a conversation for this one message alone, which keeps a look at
-// the screen during a task to a few thousand tokens however long it goes on.
+// the screen during a task to a few thousand tokens however long it goes on,
+// handing back its own session so the look can end it and no other.
 async function deliverAside(message: string, picture: Picture | null) {
   const created = client.sessions.create({
     message: compose(message, picture),
   });
+  const own = created.then(({ session }) => session);
 
-  aside = created.then(({ session }) => session);
+  aside = own;
 
-  return (await created).delivery;
+  return { delivery: (await created).delivery, own };
 }
 
 // Sends a message, and starts over once if the agent no longer knows the
@@ -172,7 +174,7 @@ async function send(
   try {
     if (fresh) return await deliverAside(message, picture);
 
-    return await deliver(message, picture);
+    return { delivery: await deliver(message, picture), own: undefined };
   } catch (error) {
     // A conversation ended in the meantime, by dismissing, stays ended.
     if (!SessionNotActiveError.is(error) || session !== opened) throw error;
@@ -180,7 +182,7 @@ async function send(
     session = undefined;
     onRestart();
 
-    return deliver(message, picture);
+    return { delivery: await deliver(message, picture), own: undefined };
   }
 }
 
@@ -196,7 +198,7 @@ export async function ask(
 
   sending = sent;
 
-  const delivery = await sent;
+  const { delivery, own } = await sent;
   const tools = new Map<string, string>();
   const texts = new Set<string>();
   const inputs = new Map<string, string>();
@@ -290,13 +292,15 @@ export async function ask(
     }
   }
 
-  // A conversation made for one look is over once it has been read.
-  if (fresh) {
-    void aside?.then(
+  // A conversation made for one look is over once it has been read. Only
+  // its own is ended: a look cut short by a newer one reads its end after
+  // that newer look has already opened a conversation of its own.
+  if (own) {
+    void own.then(
       (open) => open.end(),
       () => undefined,
     );
-    aside = undefined;
+    if (aside === own) aside = undefined;
   }
 
   return plain(text);

@@ -24,6 +24,10 @@ type Spot = { x: number; y: number };
 type Size = { width: number; height: number };
 type Request = Spot & { question: string };
 type Changed = { click: [number, number] | null; near: boolean };
+
+// A click since the agent last spoke, with the step whose control it was on
+// when it was the one pointed at, kept for every look until it is answered.
+type Click = { click: [number, number]; step?: number };
 type Motion = "still" | "trailing" | "gliding";
 
 const POINTER_WIDTH = 16;
@@ -152,6 +156,7 @@ export function Cursor() {
   const retried = useRef(false);
   const shown = useRef<number | undefined>(undefined);
   const asked = useRef<string | undefined>(undefined);
+  const lastClick = useRef<Click | undefined>(undefined);
   const said = useRef("");
   const here = useRef<Spot | undefined>(undefined);
   const goal = useRef<Spot | undefined>(undefined);
@@ -245,14 +250,22 @@ export function Cursor() {
     // spot and the screen watched instead of letting it fade away.
     const isPlanned = () => (plan.current?.remaining ?? 0) > 0;
 
+    // The app's message for a changed screen, still naming the click since
+    // the agent last spoke, so a look that replaces another loses nothing.
+    const remembered = () =>
+      automatic(lastClick.current?.click ?? null, lastClick.current?.step);
+
     // Holds the cursor in place while a task goes on, and otherwise lets it
     // fade, watching for one more change right after it pointed somewhere.
     function settle(reply: string, automatic: boolean, pointed: boolean) {
+      // Once the agent has answered, a click it was told about is history.
+      if (reply || pointed) lastClick.current = undefined;
+
       if (isPlanned()) {
         // A plan that arrived on its own gets one more look for a pointer.
         if (!pointed && !reply && !retried.current) {
           retried.current = true;
-          void run(AUTOMATIC, true);
+          void run(remembered(), true);
           return;
         }
 
@@ -438,6 +451,7 @@ export function Cursor() {
 
       resting.current = false;
       shown.current = undefined;
+      lastClick.current = undefined;
       put(beside(await toOverlay({ x, y })));
       void run(question, false);
     });
@@ -452,6 +466,8 @@ export function Cursor() {
       // a fresh look knows it was taken even when the result is too small
       // to make out, such as a box being unticked.
       const step = payload.near ? shown.current : undefined;
+
+      if (payload.click) lastClick.current = { click: payload.click, step };
 
       if (step && plan.current) {
         const steps = plan.current.steps.map((s, index) =>
@@ -472,7 +488,7 @@ export function Cursor() {
 
       const question = busy.current ? asked.current : undefined;
 
-      void run(question ?? automatic(payload.click, step), !question);
+      void run(question ?? remembered(), !question);
     });
 
     // Moves that arrive after the cursor was sent away belong to a turn that
@@ -529,6 +545,7 @@ export function Cursor() {
       guiding.current = false;
       shown.current = undefined;
       asked.current = undefined;
+      lastClick.current = undefined;
       said.current = "";
       reset();
     });
