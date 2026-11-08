@@ -12,6 +12,7 @@ import {
   ask,
   brief,
   LimitReached,
+  type Picture,
   type Plan,
   reset,
   type Shot,
@@ -123,6 +124,14 @@ function automatic(click: [number, number] | null) {
   const where = `${across}% across and ${down}% down the window`;
 
   return `${AUTOMATIC}\n(The user clicked ${where}.)`;
+}
+
+// Turns a spot the model gave in pixels of the screenshot into parts of it,
+// since the model answers in either, and the app places parts.
+function parts({ x, y }: Spot, picture: Picture): Spot {
+  if (x <= 1 && y <= 1) return { x, y };
+
+  return { x: x / picture.width, y: y / picture.height };
 }
 
 // Places the bubble along one axis, measured from the cursor's tip, so that
@@ -305,15 +314,15 @@ export function Cursor() {
           {
             // The spot arrives before the words, so the cursor sets off at
             // once and the full call only confirms it.
-            onPreview: ({ x, y }) => {
-              if (!isCurrent()) return;
+            onPreview: (spot) => {
+              if (!isCurrent() || !picture) return;
 
               pointed = true;
-              void invoke("point", { x, y, generation });
+              void invoke("point", { ...parts(spot, picture), generation });
             },
 
             onPoint: async ({ x, y, step }) => {
-              if (!isCurrent()) return;
+              if (!isCurrent() || !picture) return;
 
               // Counted at once, since the words follow straight after, and
               // taken back if the spot was on a picture that is out of date.
@@ -330,8 +339,7 @@ export function Cursor() {
               }
 
               const used = await invoke<boolean>("point", {
-                x,
-                y,
+                ...parts({ x, y }, picture),
                 generation,
               });
 

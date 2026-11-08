@@ -38,6 +38,8 @@ pub struct Picture {
     pub app: String,
     pub title: String,
     pub image: String,
+    pub width: u32,
+    pub height: u32,
 
     #[serde(skip)]
     pub frame: Frame,
@@ -286,6 +288,8 @@ mod macos {
             app,
             title: window.title,
             image: STANDARD.encode(jpeg),
+            width,
+            height,
             frame: window.frame,
             thumbnail,
         })

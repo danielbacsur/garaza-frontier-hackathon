@@ -4,8 +4,15 @@ const client = new Client({
   baseUrl: import.meta.env.VITE_AGENT_URL ?? "http://127.0.0.1:3001",
 });
 
-// A picture of the window in use, as a JPEG in base64.
-export type Picture = { app: string; title: string; image: string };
+// A picture of the window in use, as a JPEG in base64, with its size in
+// pixels, which the model is told so that it can answer in either unit.
+export type Picture = {
+  app: string;
+  title: string;
+  image: string;
+  width: number;
+  height: number;
+};
 
 // The latest picture with its number, which pointing has to quote back.
 export type Shot = { generation: number; picture: Picture | null };
@@ -89,9 +96,7 @@ function early(written: string): Spot | undefined {
 
   if (!match) return undefined;
 
-  const [x, y] = [Number(match[1]), Number(match[2])];
-
-  return x <= 1 && y <= 1 ? { x, y } : undefined;
+  return { x: Number(match[1]), y: Number(match[2]) };
 }
 
 // Puts the message and the picture of the window together, naming the app
@@ -104,9 +109,13 @@ function compose(message: string, picture: Picture | null) {
   const shown = picture.title
     ? `${picture.app}, window "${picture.title}"`
     : picture.app;
+  const size = `${picture.width} by ${picture.height} pixels`;
 
   return [
-    { type: "text" as const, text: `${message}\n\nScreenshot of ${shown}:` },
+    {
+      type: "text" as const,
+      text: `${message}\n\nScreenshot of ${shown}, ${size}:`,
+    },
 
     {
       type: "file" as const,

@@ -3,14 +3,17 @@ import { z } from "zod";
 
 import { Plan, Recorded, record } from "@/agent/lib/plan";
 
-const Fraction = z.number().min(0).max(1);
+// Parts of the screenshot's width and height, or pixels of it, which the app
+// tells apart by size, so an answer in either unit lands where it should.
+const Across = z.number().min(0);
 
 export default defineTool({
   description:
     "Point at a spot in the latest screenshot and say one line there. Give " +
     "the spot as fractions of the screenshot's width and height, from its " +
     "top left corner: 0 is the left or top edge and 1 the right or bottom " +
-    "edge. The spot must be the very control the step needs; when that " +
+    "edge, or in pixels of the screenshot, whose size the message gives. " +
+    "The spot must be the very control the step needs; when that " +
     "control is not in the screenshot, give no spot at all and say where " +
     "to scroll or go instead. A task that takes several steps starts with " +
     "its plan here, along with the pointer for its first step. This ends " +
@@ -21,8 +24,8 @@ export default defineTool({
   endsTurn: true,
 
   inputSchema: z.object({
-    x: Fraction.optional().describe("How far across the screenshot, 0 to 1."),
-    y: Fraction.optional().describe("How far down the screenshot, 0 to 1."),
+    x: Across.optional().describe("How far across the screenshot."),
+    y: Across.optional().describe("How far down the screenshot."),
     say: z.string().min(1).describe("Your reply, shown in the speech bubble."),
     step: z
       .number()
@@ -38,8 +41,8 @@ export default defineTool({
   }),
 
   outputSchema: z.object({
-    x: Fraction.nullable(),
-    y: Fraction.nullable(),
+    x: Across.nullable(),
+    y: Across.nullable(),
     say: z.string(),
     step: z.number().nullable(),
     plan: Recorded.nullable(),
