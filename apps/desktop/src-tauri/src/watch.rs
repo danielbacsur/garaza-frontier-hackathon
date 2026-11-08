@@ -122,12 +122,14 @@ pub fn watch(app: AppHandle, on: bool) {
     let now = Instant::now();
     let acted = last_action(now).unwrap_or(now);
 
+    // Nothing is owed for that action, since the agent has just seen the
+    // screen; only a later action, or a page still loading after one, counts.
     *app.state::<Watch>().0.lock().expect("watch lock") = on.then(|| Task {
         baseline,
         acted,
         looked: now,
         reported: acted,
-        reports: 0,
+        reports: MAX_REPORTS,
     });
 }
 
