@@ -21,9 +21,10 @@ export default defineTool({
     step: z
       .number()
       .int()
-      .min(1)
-      .optional()
-      .describe("During a task, the number of the step this spot is for."),
+      .min(0)
+      .describe(
+        "The number of the task step this spot is for, 0 outside a task.",
+      ),
   }),
 
   outputSchema: z.object({
@@ -36,6 +37,6 @@ export default defineTool({
   // Hands the spot back as given, since the desktop app knows where the
   // pictured window sits and places the second cursor there.
   async execute({ x, y, say, step }) {
-    return { x, y, say, step: step ?? null };
+    return { x, y, say, step: step || null };
   },
 });
