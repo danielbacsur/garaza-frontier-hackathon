@@ -34,7 +34,12 @@ export type Plan = {
 // Where the agent pointed, with the number of the task step it was for.
 export type Pointed = Spot & { step: number | null };
 
-type Pointer = Pointed & { say: string };
+type Pointer = {
+  x: number | null;
+  y: number | null;
+  say: string;
+  step: number | null;
+};
 
 type Listeners = {
   onPreview: (spot: Spot) => void;
@@ -246,7 +251,8 @@ export async function ask(
         if (tools.get(callId) === "point_at") {
           const { x, y, step, say: words } = output as Pointer;
 
-          onPoint({ x, y, step });
+          // Words without a spot are about something out of view.
+          if (x !== null && y !== null) onPoint({ x, y, step });
           if (words) say(words);
         }
 
