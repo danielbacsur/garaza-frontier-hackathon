@@ -28,6 +28,10 @@ type Changed = { click: [number, number] | null; near: boolean };
 // A click since the agent last spoke, with the step whose control it was on
 // when it was the one pointed at, kept for every look until it is answered.
 type Click = { click: [number, number]; step?: number };
+
+// How long words without a pointer during a task wait for the screen to
+// move on by itself before the agent looks once more anyway.
+const NUDGE = 3000;
 type Motion = "still" | "trailing" | "gliding";
 
 const POINTER_WIDTH = 16;
@@ -159,6 +163,8 @@ export function Cursor() {
   const lastClick = useRef<Click | undefined>(undefined);
   const restarted = useRef(false);
   const queued = useRef(false);
+  const nudge = useRef<number | undefined>(undefined);
+  const nudged = useRef(false);
   const request = useRef("");
   const said = useRef("");
   const here = useRef<Spot | undefined>(undefined);
@@ -263,6 +269,7 @@ export function Cursor() {
     function settle(reply: string, automatic: boolean, pointed: boolean) {
       // Once the agent has answered, a click it was told about is history.
       if (reply || pointed) lastClick.current = undefined;
+      if (pointed) nudged.current = false;
 
       if (isPlanned()) {
         // A plan that arrived on its own gets one more look for a pointer.
@@ -270,6 +277,17 @@ export function Cursor() {
           retried.current = true;
           void run(remembered(), true);
           return;
+        }
+
+        // Words without a pointer, such as a step called done or a page
+        // called loading, get one more look a moment later when nothing on
+        // screen moves on by itself, so the task is finished or guided on
+        // rather than left waiting for a change; once per change.
+        if (!pointed && reply && !nudged.current) {
+          nudged.current = true;
+          nudge.current = window.setTimeout(() => {
+            if (!busy.current && isPlanned()) void run(remembered(), true);
+          }, NUDGE);
         }
 
         if (!reply) setSpeech(said.current);
@@ -326,6 +344,7 @@ export function Cursor() {
 
       asked.current = automatic ? undefined : message;
       window.clearTimeout(timer.current);
+      window.clearTimeout(nudge.current);
       setMotion("still");
       setLeaving(false);
       setSpeech("");
@@ -495,6 +514,7 @@ export function Cursor() {
       // A step that was pointed at gets one look, not one after every click.
       guiding.current = false;
       retried.current = false;
+      nudged.current = false;
 
       // A turn starts over once for a newer screen; on a screen that keeps
       // changing it would otherwise never get to answer, so later changes
@@ -573,6 +593,8 @@ export function Cursor() {
       lastClick.current = undefined;
       restarted.current = false;
       queued.current = false;
+      nudged.current = false;
+      window.clearTimeout(nudge.current);
       request.current = "";
       said.current = "";
       reset();
