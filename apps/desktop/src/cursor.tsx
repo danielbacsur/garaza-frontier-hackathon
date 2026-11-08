@@ -267,7 +267,7 @@ export function Cursor() {
     }
 
     // Follows a planned task one step on from a fresh picture without a turn
-    // of the agent, handing over to one when the screen is not as planned.
+    // of the agent, which only takes over again if the check itself fails.
     async function advance() {
       const current = ++turn.current;
       const isCurrent = () => current === turn.current;
@@ -289,8 +289,6 @@ export function Cursor() {
 
         void invoke("note", { message: `step: ${outcome.kind}` });
 
-        if (outcome.kind === "lost") return void run(AUTOMATIC, true);
-
         if (outcome.kind === "finished") {
           complete(task.steps.length);
           plan.current = undefined;
@@ -301,11 +299,14 @@ export function Cursor() {
           return;
         }
 
-        const { index, x, y, say } = outcome;
+        complete(outcome.index);
 
-        complete(index);
-        void invoke("point", { x, y, generation });
-        said.current = plain(say);
+        // Words for a control out of sight are said beside the mouse.
+        void (outcome.kind === "point"
+          ? invoke("point", { x: outcome.x, y: outcome.y, generation })
+          : invoke("release"));
+
+        said.current = plain(outcome.say);
         setSpeech(said.current);
         void invoke("watch", { on: true });
       } catch (error) {

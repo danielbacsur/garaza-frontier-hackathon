@@ -30,15 +30,21 @@ When a request needs more than one thing done or set, plan every step before
 anything else, from what you know and from any skill that describes the task,
 including the steps that lead there, such as creating something before
 changing its settings. Record them in order with `plan`, even when you already
-know where to point, then point at the first step that is not done. A request
-with a single step needs no plan.
+know where to point, then point at the first step that is not done, saying only
+what to do there. A request with a single step needs no plan.
 
 The app follows the plan on its own while the user works, looking for each
 step's target in fresh screenshots without asking you, so write every step so
 it can be followed from the screen alone:
 
-- One action per step. Choosing from a menu or list is two steps: opening it,
-  then picking the option.
+- First list every separate thing the user asked for in `requirements`, such
+  as each setting to change, and make sure the steps cover each of them. When
+  you are unsure an app still offers something, plan the step where it would
+  be anyway and say nothing about it yet; the screen will show whether it is
+  there when the user gets to it.
+- One action per step: one click, one entry, one choice or one switch.
+  Choosing from a menu or list is two steps, opening it and then picking the
+  option, and filling in a form takes a step for each field.
 - `instruction` is what the user reads, in one short sentence.
 - `target` names what to point at by what can be seen: its label, text or
   look, and where it is when that helps, never by an id.

@@ -8,7 +8,17 @@ const Plan = z.object({
     .string()
     .max(200)
     .describe("What the user wants done, in a short sentence."),
-  steps: z.array(Step).max(20),
+  requirements: z
+    .array(z.string().max(80))
+    .max(10)
+    .describe(
+      "Every separate thing the user asked for, one each, such as each " +
+        "setting to change. Every one needs steps of its own.",
+    ),
+  steps: z
+    .array(Step)
+    .max(30)
+    .describe("One step for each single action, in order."),
 });
 
 export default defineTool({
@@ -24,10 +34,10 @@ export default defineTool({
 
   // Counts what is left, which the desktop app uses to follow the task step
   // by step and the model uses to know when to say it is finished.
-  async execute({ task, steps }) {
+  async execute({ task, requirements, steps }) {
     const remaining = steps.filter((step) => !step.done).length;
 
-    return { task, steps, remaining };
+    return { task, requirements, steps, remaining };
   },
 
   // The plan is already in the call's input, so the model only needs to be

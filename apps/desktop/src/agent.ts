@@ -22,8 +22,10 @@ export const AUTOMATIC =
 // which only its spending cap does, since this agent asks nothing itself.
 export class LimitReached extends Error {}
 
-// One step of a task: what to say, what to point at, and how it looks done.
+// One step of a task: its action, what to say, what to point at, and how it
+// looks once done.
 export type Step = {
+  action: string;
   instruction: string;
   target: string;
   doneWhen: string;
@@ -31,13 +33,18 @@ export type Step = {
 };
 
 // A task's steps, and how many are not done yet.
-export type Plan = { task: string; steps: Step[]; remaining: number };
+export type Plan = {
+  task: string;
+  requirements: string[];
+  steps: Step[];
+  remaining: number;
+};
 
 // What a quick look at the screen found for the step under way.
 export type Outcome =
   | ({ kind: "point"; index: number; say: string } & Spot)
-  | { kind: "finished" }
-  | { kind: "lost" };
+  | { kind: "tell"; index: number; say: string }
+  | { kind: "finished" };
 
 type Pointer = Spot & { say: string };
 
