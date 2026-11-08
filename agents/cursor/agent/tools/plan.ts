@@ -1,7 +1,17 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 
-import { Step } from "@/agent/lib/step";
+const Step = z.object({
+  instruction: z
+    .string()
+    .min(1)
+    .max(120)
+    .describe(
+      "One action, such as one click, one choice or one entry, in one " +
+        "short sentence.",
+    ),
+  done: z.boolean().describe("Whether the screen shows it is already done."),
+});
 
 const Plan = z.object({
   task: z
@@ -23,7 +33,7 @@ const Plan = z.object({
 
 export default defineTool({
   description:
-    "Record every step of a task that takes several, in order, and mark the " +
+    "Record the steps of a task that takes several, in order, marking the " +
     "ones the screen shows are done. Pass the complete plan on every call, " +
     "or an empty list of steps to drop it. Call it on its own, then point " +
     "at the first step that is not done.",
@@ -32,8 +42,8 @@ export default defineTool({
 
   outputSchema: Plan.extend({ remaining: z.number() }),
 
-  // Counts what is left, which the desktop app uses to follow the task step
-  // by step and the model uses to know when to say it is finished.
+  // Counts what is left, which the desktop app uses to keep watching the
+  // screen and the model uses to know when to say it is finished.
   async execute({ task, requirements, steps }) {
     const remaining = steps.filter((step) => !step.done).length;
 

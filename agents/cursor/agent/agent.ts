@@ -3,7 +3,7 @@ import { defineAgent } from "eve";
 export default defineAgent({
   model: "openai/gpt-6-luna-fast",
   defaultTools: false,
-  reasoning: "medium",
+  reasoning: "low",
 
   // Turns can start on their own while a task is under way, each with a
   // screenshot, so a session that keeps going stops before it costs much.

@@ -1,8 +1,8 @@
 import { Client, type ClientSession, SessionNotActiveError } from "eve/client";
 
-const AGENT_URL = import.meta.env.VITE_AGENT_URL ?? "http://127.0.0.1:3001";
-
-const client = new Client({ baseUrl: AGENT_URL });
+const client = new Client({
+  baseUrl: import.meta.env.VITE_AGENT_URL ?? "http://127.0.0.1:3001",
+});
 
 // A picture of the window in use, as a JPEG in base64.
 export type Picture = { app: string; title: string; image: string };
@@ -22,29 +22,13 @@ export const AUTOMATIC =
 // which only its spending cap does, since this agent asks nothing itself.
 export class LimitReached extends Error {}
 
-// One step of a task: its action, what to say, what to point at, and how it
-// looks once done.
-export type Step = {
-  action: string;
-  instruction: string;
-  target: string;
-  doneWhen: string;
-  done: boolean;
-};
-
 // A task's steps, and how many are not done yet.
 export type Plan = {
   task: string;
   requirements: string[];
-  steps: Step[];
+  steps: { instruction: string; done: boolean }[];
   remaining: number;
 };
-
-// What a quick look at the screen found for the step under way.
-export type Outcome =
-  | ({ kind: "point"; index: number; say: string } & Spot)
-  | { kind: "tell"; index: number; say: string }
-  | { kind: "finished" };
 
 type Pointer = Spot & { say: string };
 
@@ -204,25 +188,6 @@ export async function ask(
   }
 
   return plain(text);
-}
-
-// Checks a planned task against a fresh picture without a turn of the agent,
-// which finds the next spot to point at in a second or two.
-export async function step(picture: Picture, plan: Plan): Promise<Outcome> {
-  const response = await fetch(`${AGENT_URL}/step`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-
-    body: JSON.stringify({
-      picture: picture.image,
-      task: plan.task,
-      steps: plan.steps,
-    }),
-  });
-
-  if (!response.ok) throw new Error(`step check failed: ${response.status}`);
-
-  return response.json();
 }
 
 // Stops the turn that is running, so a new question never has to share it

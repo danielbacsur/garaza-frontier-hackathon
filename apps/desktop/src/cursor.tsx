@@ -12,10 +12,8 @@ import {
   ask,
   LimitReached,
   type Plan,
-  plain,
   reset,
   type Shot,
-  step,
   stop,
 } from "./agent";
 import pointer from "./assets/cursor.png";
@@ -47,7 +45,6 @@ const SHY_CHECK_MS = 120;
 const SHY_DISTANCE = 28;
 const FALLBACK = "Something went wrong. Please try again.";
 const LIMIT = "This conversation got long, so I started over. Ask again.";
-const FINISHED = "That's everything, you're all done.";
 const REST_GAP = 28;
 const SPRING = 14;
 
@@ -129,7 +126,6 @@ export function Cursor() {
   const plan = useRef<Plan | undefined>(undefined);
   const guiding = useRef(false);
   const said = useRef("");
-  const news = useRef<string[]>([]);
   const here = useRef<Spot | undefined>(undefined);
   const goal = useRef<Spot | undefined>(undefined);
   const velocity = useRef<Spot>({ x: 0, y: 0 });
@@ -246,80 +242,9 @@ export function Cursor() {
       linger(reply || said.current);
     }
 
-    // Marks the steps before one as done, keeping a note of them for the
-    // agent, which did not see the person get through them.
-    function complete(until: number) {
-      const task = plan.current;
-
-      if (!task) return;
-
-      const steps = task.steps.map((step, index) => {
-        if (index >= until || step.done) return step;
-
-        news.current.push(`done: ${step.instruction}`);
-
-        return { ...step, done: true };
-      });
-
-      const remaining = steps.filter((step) => !step.done).length;
-
-      plan.current = { ...task, steps, remaining };
-    }
-
-    // Follows a planned task one step on from a fresh picture without a turn
-    // of the agent, which only takes over again if the check itself fails.
-    async function advance() {
-      const current = ++turn.current;
-      const isCurrent = () => current === turn.current;
-      const task = plan.current;
-
-      window.clearTimeout(timer.current);
-      setLeaving(false);
-      void invoke("watch", { on: false });
-
-      try {
-        const { generation, picture } = await invoke<Shot>("screen");
-
-        if (!isCurrent()) return;
-        if (!task || !picture) return void run(AUTOMATIC, true);
-
-        const outcome = await step(picture, task);
-
-        if (!isCurrent()) return;
-
-        void invoke("note", { message: `step: ${outcome.kind}` });
-
-        if (outcome.kind === "finished") {
-          complete(task.steps.length);
-          plan.current = undefined;
-          void invoke("release");
-          said.current = FINISHED;
-          setSpeech(FINISHED);
-          linger(FINISHED);
-          return;
-        }
-
-        complete(outcome.index);
-
-        // Words for a control out of sight are said beside the mouse.
-        void (outcome.kind === "point"
-          ? invoke("point", { x: outcome.x, y: outcome.y, generation })
-          : invoke("release"));
-
-        said.current = plain(outcome.say);
-        setSpeech(said.current);
-        void invoke("watch", { on: true });
-      } catch (error) {
-        if (!isCurrent()) return;
-
-        void invoke("report", { message: `step failed: ${error}` });
-        void run(AUTOMATIC, true);
-      }
-    }
-
     // Runs one turn with the screen as it is now, whether the person asked
     // something or the screen changed while a task was under way.
-    async function run(base: string, automatic: boolean) {
+    async function run(message: string, automatic: boolean) {
       const current = ++turn.current;
       const isCurrent = () => current === turn.current;
       let pointed = false;
@@ -338,11 +263,6 @@ export function Cursor() {
         if (!isCurrent()) return;
 
         busy.current = true;
-
-        // Steps the person got through between turns, told once.
-        const message = [base, ...news.current.map((n) => `(${n})`)].join("\n");
-
-        news.current = [];
 
         const { generation, picture } = await invoke<Shot>("screen");
 
@@ -432,7 +352,7 @@ export function Cursor() {
         put(beside(await toOverlay(await mouseInPoints())));
       }
 
-      void (isPlanned() ? advance() : run(AUTOMATIC, true));
+      void run(AUTOMATIC, true);
     });
 
     // The person stopped working on the task, so the cursor says its last
@@ -494,7 +414,6 @@ export function Cursor() {
       plan.current = undefined;
       guiding.current = false;
       said.current = "";
-      news.current = [];
       reset();
     });
 

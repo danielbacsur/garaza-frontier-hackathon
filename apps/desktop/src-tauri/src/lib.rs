@@ -315,13 +315,6 @@ fn hide_panel(app: AppHandle) -> tauri::Result<()> {
         .hide()
 }
 
-// Records what happened in the windows, such as how a step was followed,
-// since nothing they print reaches a place anyone could read it later.
-#[tauri::command]
-fn note(message: String) {
-    journal::event(&message);
-}
-
 // Records a problem the windows ran into, since nothing they print reaches a
 // place anyone could read it after the fact.
 #[tauri::command]
@@ -512,7 +505,6 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             dismiss,
             hide_panel,
-            note,
             point,
             release,
             report,
