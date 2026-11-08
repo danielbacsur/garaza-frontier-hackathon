@@ -62,7 +62,8 @@ export function brief(plan: Plan, last: string) {
     ...steps,
     ...(last ? [`You last said: "${last}"`] : []),
     "Point at the current step with point_at, in the language you last " +
-      "used. Call plan only to change the plan or to finish it.",
+      "used, or say where to scroll or go when its control is not in the " +
+      "screenshot. Call plan only to change the plan or to finish it.",
   ].join("\n");
 }
 
