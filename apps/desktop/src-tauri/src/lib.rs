@@ -5,7 +5,7 @@ mod watch;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Condvar, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use capture::Picture;
 use serde::Serialize;
@@ -31,6 +31,10 @@ struct Shot {
     // Whether the picture under this number is still being taken.
     #[serde(skip)]
     pending: bool,
+
+    // When the picture was taken, which anything done since has not been in.
+    #[serde(skip)]
+    taken: Option<Instant>,
 }
 
 // The latest picture, and a signal for whoever waits on one being taken.
@@ -46,6 +50,11 @@ struct Pointing(AtomicBool);
 // points, so the next look can say whether they took the step shown.
 #[derive(Default)]
 struct Clicked(Mutex<Option<(f64, f64)>>);
+
+// Where the second cursor last pointed, in screen points, so that a click
+// there can be told from a click anywhere else.
+#[derive(Default)]
+struct Placed(Mutex<Option<(f64, f64)>>);
 
 // The app that was in front when the prompt opened, which gets focus back.
 #[derive(Default)]
@@ -224,7 +233,12 @@ fn release(pointing: State<Pointing>) {
 
 // Stores a picture under the next number, to match the agent's spots with,
 // unless a newer one was started while this one was being taken.
-fn publish(app: &AppHandle, picture: Picture, taken_under: u64) -> bool {
+fn publish(
+    app: &AppHandle,
+    picture: Picture,
+    taken_under: u64,
+    taken: Instant,
+) -> bool {
     let state = app.state::<Screen>();
     let mut shot = state.0.lock().expect("screen lock");
 
@@ -234,6 +248,7 @@ fn publish(app: &AppHandle, picture: Picture, taken_under: u64) -> bool {
 
     shot.generation += 1;
     shot.picture = Some(picture);
+    shot.taken = Some(taken);
     true
 }
 
@@ -251,18 +266,27 @@ fn picture_later(app: &AppHandle, front: Option<i32>) {
     };
 
     let app = app.clone();
+    let started = Instant::now();
 
     thread::spawn(move || {
         let picture = front.and_then(capture::capture);
         let state = app.state::<Screen>();
         let mut shot = state.0.lock().expect("screen lock");
 
-        journal::event(&format!("summon: pictured {}", picture.is_some()));
+        let shown = picture.as_ref().map_or("nothing".to_string(), |p| {
+            format!("{} at {}x{}", p.app, p.width, p.height)
+        });
+
+        journal::event(&format!(
+            "summon: pictured {shown} in {} ms",
+            started.elapsed().as_millis()
+        ));
 
         // A newer picture may have been started while this one was taken.
         if shot.generation == generation {
             shot.picture = picture;
             shot.pending = false;
+            shot.taken = Some(started);
         }
 
         state.1.notify_all();
@@ -338,6 +362,13 @@ fn report(message: String) {
     journal::event(&format!("window error: {message}"));
 }
 
+// Records how a turn went, in numbers rather than words, so that a run can
+// be followed in the log without anything from the screen ending up there.
+#[tauri::command]
+fn note(message: String) {
+    journal::event(&format!("cursor: {message}"));
+}
+
 // Stretches the overlay over the display holding a spot, so that one window
 // can serve every display the cursor needs to reach.
 fn cover_display(
@@ -365,8 +396,10 @@ fn think(app: AppHandle, question: String) -> tauri::Result<()> {
     panel.hide()?;
     return_focus(&app);
 
-    // A new question starts beside the mouse, not on the last spot.
+    // A new question starts beside the mouse, not on the last spot, and the
+    // click that opened or used the prompt says nothing about the window.
     app.state::<Pointing>().0.store(false, Ordering::Relaxed);
+    *app.state::<Clicked>().0.lock().expect("click lock") = None;
 
     if cover_display(&cursor, (x, y))?.is_none() {
         journal::event("think: no display under the mouse");
@@ -406,6 +439,7 @@ fn point(
 
     journal::event(&format!("point: {x:.0},{y:.0}"));
     app.state::<Pointing>().0.store(true, Ordering::Relaxed);
+    *app.state::<Placed>().0.lock().expect("placed lock") = Some((x, y));
 
     let cursor = app.get_webview_window("cursor").expect("cursor window");
 
@@ -500,6 +534,7 @@ pub fn run() {
         .manage(FrontApp::default())
         .manage(Pointing::default())
         .manage(Clicked::default())
+        .manage(Placed::default())
         .manage(watch::Watch::default())
         .setup(|app| {
             #[cfg(target_os = "macos")]
@@ -522,6 +557,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             dismiss,
             hide_panel,
+            note,
             point,
             release,
             report,

@@ -6,36 +6,40 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::capture::{self, Picture};
-use crate::{Clicked, FrontApp, Screen, journal, publish};
+use crate::{Clicked, FrontApp, Placed, Screen, journal, publish};
 
 const TICK: Duration = Duration::from_millis(100);
-const LOOK: Duration = Duration::from_millis(150);
 const PAUSE: Duration = Duration::from_millis(150);
-const SETTLE: Duration = Duration::from_millis(120);
-const MAX_PICTURES: usize = 5;
+const LOOK: Duration = Duration::from_millis(150);
+const QUICK: Duration = Duration::from_secs(1);
+const IDLE_LOOK: Duration = Duration::from_millis(500);
 const KEEP_LOOKING: Duration = Duration::from_secs(10);
-const MAX_REPORTS: u8 = 2;
 
-// A task being followed: what the screen looked like when the agent last
-// saw it, when the person last acted, when the screen was last looked at
-// and reported, and how many changes that action has been reported for.
+// How close to the spot pointed at a click still counts as being on it, in
+// screen points, about the size of a small button.
+const NEAR: f64 = 28.0;
+
+// A task being followed: whether changes nobody caused count too, when the
+// person last acted, when the screen was last looked at, and what that look
+// saw, for telling a screen that has settled from one still changing.
 #[derive(Clone)]
 struct Task {
-    baseline: Option<Picture>,
+    idle: bool,
     acted: Instant,
     looked: Instant,
-    reported: Instant,
-    reports: u8,
+    seen: Option<Picture>,
 }
 
 #[derive(Default)]
 pub struct Watch(Mutex<Option<Task>>);
 
 // What the cursor is told when the screen changed: where the person clicked
-// meanwhile, as parts of the pictured window, when they did.
+// meanwhile, as parts of the pictured window, and whether that was on the
+// spot the cursor was pointing at.
 #[derive(Clone, Serialize)]
 struct Changed {
     click: Option<(f64, f64)>,
+    near: bool,
 }
 
 #[cfg(target_os = "macos")]
@@ -102,34 +106,32 @@ fn last_action(now: Instant) -> Option<Instant> {
     now.checked_sub(since)
 }
 
-// Starts following from the screen the agent was just shown, or stops; the
-// cursor turns it off as each turn starts and on again once a turn ends.
+// Starts following the screen, or stops. The cursor turns it on as a turn
+// starts, so that whatever the person does while the agent answers is seen,
+// and again as the turn ends, idle too while a task is under way.
 #[tauri::command]
-pub fn watch(app: AppHandle, on: bool) {
-    let baseline = {
-        let shot = app.state::<Screen>();
-        let shot = shot.0.lock().expect("screen lock");
+pub fn watch(app: AppHandle, on: bool, idle: bool) {
+    let state = app.state::<Watch>();
+    let mut watch = state.0.lock().expect("watch lock");
+    let kept = watch.take();
 
-        shot.picture.clone()
-    };
+    journal::event(&format!("watch: on {on}, idle {idle}"));
 
-    // Only clicks from now on say anything about the step just shown.
-    *app.state::<Clicked>().0.lock().expect("click lock") = None;
+    // A task already being followed keeps what it saw and when the person
+    // acted, so an action made during the turn is still reported.
+    *watch = on.then(|| match kept {
+        Some(task) => Task { idle, ..task },
 
-    journal::event(if on { "watch: on" } else { "watch: off" });
+        None => {
+            let now = Instant::now();
 
-    // Whatever the person did while the agent was answering counts too.
-    let now = Instant::now();
-    let acted = last_action(now).unwrap_or(now);
-
-    // Nothing is owed for that action, since the agent has just seen the
-    // screen; only a later action, or a page still loading after one, counts.
-    *app.state::<Watch>().0.lock().expect("watch lock") = on.then(|| Task {
-        baseline,
-        acted,
-        looked: now,
-        reported: acted,
-        reports: MAX_REPORTS,
+            Task {
+                idle,
+                acted: last_action(now).unwrap_or(now),
+                looked: now,
+                seen: None,
+            }
+        }
     });
 }
 
@@ -139,32 +141,17 @@ pub fn stop(app: &AppHandle) {
     *app.state::<Watch>().0.lock().expect("watch lock") = None;
 }
 
-// Pictures the window in use until two pictures in a row agree, so a page
-// that is still loading is only reported once it has settled.
-fn settled(app_id: i32) -> Option<Picture> {
-    let mut picture = capture::capture(app_id)?;
-
-    for _ in 1..MAX_PICTURES {
-        thread::sleep(SETTLE);
-
-        let again = capture::capture(app_id)?;
-        let same = !again.differs(&picture);
-
-        picture = again;
-
-        if same {
-            break;
-        }
-    }
-
-    Some(picture)
+// Reads when the picture the agent last got was taken, which any action
+// made since has not been seen.
+fn last_taken(app: &AppHandle) -> Option<Instant> {
+    app.state::<Screen>().0.lock().expect("screen lock").taken
 }
 
-// Hands over the task for a look once a second after the person acts, for
-// as long as it takes a change to show, and for a short while after one was
-// reported, since pages keep loading; a change nobody caused, such as a
-// video playing, is left alone, however long the person stays away.
-fn due(app: &AppHandle, now: Instant) -> Option<Task> {
+// Hands over the task for a look every so often: quickly for a second after
+// the person acts, then every half second for a while, or for as long as a
+// task is open, since pages finish loading while nobody is acting.
+fn due(app: &AppHandle, now: Instant) -> Option<(Task, bool)> {
+    let taken = last_taken(app);
     let state = app.state::<Watch>();
     let mut watch = state.0.lock().expect("watch lock");
     let task = watch.as_mut()?;
@@ -173,18 +160,21 @@ fn due(app: &AppHandle, now: Instant) -> Option<Task> {
         task.acted = acted;
     }
 
-    let acting = now.duration_since(task.acted) < PAUSE;
-    let soon = now.duration_since(task.looked) < LOOK;
-    let unreported = task.acted > task.reported;
-    let loading = now.duration_since(task.reported) < KEEP_LOOKING
-        && task.reports < MAX_REPORTS;
+    let since_acted = now.duration_since(task.acted);
+    let over = !task.idle && since_acted > KEEP_LOOKING;
+    let interval = if since_acted < QUICK { LOOK } else { IDLE_LOOK };
 
-    if acting || soon || !(unreported || loading) {
+    if since_acted < PAUSE || over || now.duration_since(task.looked) < interval
+    {
         return None;
     }
 
     task.looked = now;
-    Some(task.clone())
+
+    // An action made since the agent last got a picture is still unseen.
+    let prompted = taken.is_none_or(|taken| task.acted > taken);
+
+    Some((task.clone(), prompted))
 }
 
 // Checks whether our own app is in front, because typing into the prompt
@@ -203,8 +193,46 @@ fn current_generation(app: &AppHandle) -> u64 {
         .generation
 }
 
+// Reads what the agent last saw, or is looking at right now, which is what
+// any change is measured against.
+fn baseline(app: &AppHandle) -> Option<Picture> {
+    app.state::<Screen>()
+        .0
+        .lock()
+        .expect("screen lock")
+        .picture
+        .clone()
+}
+
+// Tells whether a click landed on the spot the cursor was pointing at, which
+// says that the step shown was taken.
+fn near(click: (f64, f64), placed: Option<(f64, f64)>) -> bool {
+    placed.is_some_and(|(x, y)| {
+        (click.0 - x).abs() <= NEAR && (click.1 - y).abs() <= NEAR
+    })
+}
+
+// Notes what this look saw, and tells whether the screen has settled since
+// the look before, which a page still loading or a video has not.
+fn settled(app: &AppHandle, picture: &Picture) -> bool {
+    let state = app.state::<Watch>();
+    let mut watch = state.0.lock().expect("watch lock");
+    let Some(task) = watch.as_mut() else {
+        return false;
+    };
+
+    let settled = task
+        .seen
+        .as_ref()
+        .is_some_and(|seen| !picture.differs_widely(seen));
+
+    task.seen = Some(picture.clone());
+    settled
+}
+
 // Compares the screen with what the agent last saw, and lets the cursor know
-// once it has settled into something new, and where the person clicked.
+// once it has settled into something new, or once the person has clicked,
+// and where that click was.
 fn follow(app: AppHandle) {
     loop {
         thread::sleep(TICK);
@@ -213,10 +241,7 @@ fn follow(app: AppHandle) {
             continue;
         }
 
-        let Some(Task {
-            baseline, acted, ..
-        }) = due(&app, Instant::now())
-        else {
+        let Some((task, prompted)) = due(&app, Instant::now()) else {
             continue;
         };
 
@@ -226,39 +251,36 @@ fn follow(app: AppHandle) {
 
         let generation = current_generation(&app);
 
-        let Some(picture) = settled(front) else {
+        let Some(picture) = capture::capture(front) else {
             continue;
         };
 
-        let changed = baseline.is_none_or(|before| picture.differs(&before));
+        let settled = settled(&app, &picture);
+        let clicked = *app.state::<Clicked>().0.lock().expect("click lock");
+
+        // After an action, any difference counts, and a screen that will not
+        // settle, such as a video playing, is reported as it is after a
+        // moment; on its own, only a wide and settled change does.
+        let changed = baseline(&app).is_none_or(|before| {
+            if prompted {
+                picture.differs(&before)
+            } else {
+                picture.differs_widely(&before)
+            }
+        });
+        let forced = prompted && task.acted.elapsed() >= QUICK;
 
         // The prompt may have opened, or pictured the screen itself, while
-        // this picture settled.
+        // this picture was taken.
         let stale = busy() || current_generation(&app) != generation;
 
-        if stale || !changed {
+        if stale || !(changed || clicked.is_some()) || !(settled || forced) {
             continue;
         }
 
-        let state = app.state::<Watch>();
-        let mut watch = state.0.lock().expect("watch lock");
-
-        let Some(task) = watch.as_mut() else {
-            continue;
-        };
-
-        task.baseline = Some(picture.clone());
-        task.reports = if task.acted > task.reported {
-            1
-        } else {
-            task.reports + 1
-        };
-        task.reported = Instant::now().max(acted);
-        drop(watch);
-
         let frame = picture.frame;
 
-        if !publish(&app, picture, generation) {
+        if !publish(&app, picture, generation, task.looked) {
             continue;
         }
 
@@ -273,10 +295,12 @@ fn follow(app: AppHandle) {
         // The click they made meanwhile counts when it was on the window.
         let clicked =
             app.state::<Clicked>().0.lock().expect("click lock").take();
+        let placed = *app.state::<Placed>().0.lock().expect("placed lock");
         let click = clicked.and_then(|(x, y)| frame.fraction(x, y));
+        let near = clicked.is_some_and(|at| near(at, placed));
 
         journal::event(&format!(
-            "watch: the screen changed, click {}",
+            "watch: the screen changed, click {}, near {near}",
             click.is_some()
         ));
 
@@ -285,7 +309,7 @@ fn follow(app: AppHandle) {
             let _ = cursor.show();
         }
 
-        let _ = app.emit_to("cursor", "changed", Changed { click });
+        let _ = app.emit_to("cursor", "changed", Changed { click, near });
     }
 }
 

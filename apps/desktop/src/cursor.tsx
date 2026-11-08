@@ -23,7 +23,7 @@ import pointer from "./assets/cursor.png";
 type Spot = { x: number; y: number };
 type Size = { width: number; height: number };
 type Request = Spot & { question: string };
-type Changed = { click: [number, number] | null };
+type Changed = { click: [number, number] | null; near: boolean };
 type Motion = "still" | "trailing" | "gliding";
 
 const POINTER_WIDTH = 16;
@@ -114,16 +114,16 @@ async function isMouseNear(bubble: HTMLElement, margin: number) {
 }
 
 // Writes the app's own message for a screen that changed, saying where the
-// person clicked when they did, so the agent can tell whether they took the
-// step it showed.
-function automatic(click: [number, number] | null) {
+// person clicked when they did, and which step's control that was when it
+// was the one pointed at, so the agent can tell whether they took the step.
+function automatic(click: [number, number] | null, step?: number) {
   if (!click) return AUTOMATIC;
 
   const [across, down] = click.map((part) => Math.round(part * 100));
-
   const where = `${across}% across and ${down}% down the window`;
+  const taken = step ? `the control you pointed at for step ${step}, ` : "";
 
-  return `${AUTOMATIC}\n(The user clicked ${where}.)`;
+  return `${AUTOMATIC}\n(The user clicked ${taken}${where}.)`;
 }
 
 // Turns a spot the model gave in pixels of the screenshot into parts of it,
@@ -150,6 +150,8 @@ export function Cursor() {
   const plan = useRef<Plan | undefined>(undefined);
   const guiding = useRef(false);
   const retried = useRef(false);
+  const shown = useRef<number | undefined>(undefined);
+  const asked = useRef<string | undefined>(undefined);
   const said = useRef("");
   const here = useRef<Spot | undefined>(undefined);
   const goal = useRef<Spot | undefined>(undefined);
@@ -256,7 +258,7 @@ export function Cursor() {
 
         if (!reply) setSpeech(said.current);
 
-        void invoke("watch", { on: true });
+        void invoke("watch", { on: true, idle: true });
         return;
       }
 
@@ -270,8 +272,28 @@ export function Cursor() {
         return;
       }
 
-      void invoke("watch", { on: pointed });
+      void invoke("watch", { on: pointed, idle: false });
       linger(reply || said.current);
+    }
+
+    // Sums a turn up for the log in numbers alone: what set it off, the step
+    // shown, how far the task has got and how long the answer took.
+    function note(
+      automatic: boolean,
+      pointed: boolean,
+      reply: string,
+      ms: number,
+    ) {
+      const steps = plan.current?.steps ?? [];
+      const done = steps.filter((step) => step.done).length;
+      const kind = automatic ? "change" : "question";
+      const spot = pointed ? "pointed" : "no spot";
+      const words = reply ? "spoke" : "silent";
+      const step = `step ${shown.current ?? 0}, ${done}/${steps.length} done`;
+
+      void invoke("note", {
+        message: `${kind}: ${step}, ${spot}, ${words}, ${ms} ms`,
+      });
     }
 
     // Runs one turn with the screen as it is now, whether the person asked
@@ -279,14 +301,19 @@ export function Cursor() {
     async function run(message: string, automatic: boolean) {
       const current = ++turn.current;
       const isCurrent = () => current === turn.current;
+      const started = performance.now();
       let pointed = false;
       let released = false;
 
+      asked.current = automatic ? undefined : message;
       window.clearTimeout(timer.current);
       setMotion("still");
       setLeaving(false);
       setSpeech("");
-      void invoke("watch", { on: false });
+
+      // The screen stays watched while the agent answers, so that whatever
+      // the person does meanwhile is looked at rather than lost.
+      void invoke("watch", { on: true, idle: isPlanned() });
 
       try {
         if (busy.current) await stop();
@@ -327,12 +354,16 @@ export function Cursor() {
               // Counted at once, since the words follow straight after, and
               // taken back if the spot was on a picture that is out of date.
               pointed = true;
+              shown.current = step ?? undefined;
 
-              // Pointing at a step means the ones before it were seen done.
+              // Pointing at a step means the ones before it were seen done,
+              // and a click on the step itself has been judged by now.
               if (step && plan.current) {
-                const steps = plan.current.steps.map((s, index) =>
-                  index < step - 1 ? { ...s, done: true } : s,
-                );
+                const steps = plan.current.steps.map((s, index) => ({
+                  ...s,
+                  done: s.done || index < step - 1,
+                  clicked: s.clicked && index > step - 1,
+                }));
                 const remaining = steps.filter((s) => !s.done).length;
 
                 plan.current = { ...plan.current, steps, remaining };
@@ -376,7 +407,12 @@ export function Cursor() {
           fresh,
         );
 
-        if (isCurrent()) settle(reply, automatic, pointed);
+        if (isCurrent()) {
+          const ms = Math.round(performance.now() - started);
+
+          settle(reply, automatic, pointed);
+          note(automatic, pointed, reply, ms);
+        }
       } catch (error) {
         if (!isCurrent()) return;
 
@@ -388,7 +424,10 @@ export function Cursor() {
         setSpeech(words);
         linger(words);
       } finally {
-        if (isCurrent()) busy.current = false;
+        if (isCurrent()) {
+          busy.current = false;
+          asked.current = undefined;
+        }
       }
     }
 
@@ -398,14 +437,29 @@ export function Cursor() {
       const { x, y, question } = payload;
 
       resting.current = false;
+      shown.current = undefined;
       put(beside(await toOverlay({ x, y })));
       void run(question, false);
     });
 
-    // The screen moved on while a task or a pointed step was under way, so
-    // the agent looks again, from beside the mouse if it was put away.
+    // The screen moved on while a task, a pointed step or an answer was under
+    // way, so the agent looks again, from beside the mouse if it was put
+    // away, and a question still being answered is asked of the new screen.
     const changing = listen<Changed>("changed", async ({ payload }) => {
-      if (!isPlanned() && !guiding.current) return;
+      if (!busy.current && !isPlanned() && !guiding.current) return;
+
+      // A click on the spot pointed at for a step is noted on that step, so
+      // a fresh look knows it was taken even when the result is too small
+      // to make out, such as a box being unticked.
+      const step = payload.near ? shown.current : undefined;
+
+      if (step && plan.current) {
+        const steps = plan.current.steps.map((s, index) =>
+          index === step - 1 ? { ...s, clicked: true } : s,
+        );
+
+        plan.current = { ...plan.current, steps };
+      }
 
       // A step that was pointed at gets one look, not one after every click.
       guiding.current = false;
@@ -416,7 +470,9 @@ export function Cursor() {
         put(beside(await toOverlay(await mouseInPoints())));
       }
 
-      void run(automatic(payload.click), true);
+      const question = busy.current ? asked.current : undefined;
+
+      void run(question ?? automatic(payload.click, step), !question);
     });
 
     // Moves that arrive after the cursor was sent away belong to a turn that
@@ -452,7 +508,9 @@ export function Cursor() {
 
       // Someone may still be reaching for what was pointed at, so the screen
       // stays watched for that one step after the cursor has gone.
-      if (!isPlanned() && !guiding.current) void invoke("watch", { on: false });
+      if (!isPlanned() && !guiding.current) {
+        void invoke("watch", { on: false, idle: false });
+      }
 
       window.clearTimeout(timer.current);
       goal.current = undefined;
@@ -469,6 +527,8 @@ export function Cursor() {
       busy.current = false;
       plan.current = undefined;
       guiding.current = false;
+      shown.current = undefined;
+      asked.current = undefined;
       said.current = "";
       reset();
     });

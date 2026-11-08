@@ -29,11 +29,12 @@ export const AUTOMATIC =
 // which only its spending cap does, since this agent asks nothing itself.
 export class LimitReached extends Error {}
 
-// A task's steps, and how many are not done yet.
+// A task's steps, each noting whether it was seen done, or its control was
+// clicked since the agent last looked, and how many are not done yet.
 export type Plan = {
   task: string;
   requirements: string[];
-  steps: { instruction: string; done: boolean }[];
+  steps: { instruction: string; done: boolean; clicked?: boolean }[];
   say?: string;
   remaining: number;
 };
@@ -62,12 +63,14 @@ let aside: Promise<ClientSession> | undefined;
 let sending: Promise<unknown> | undefined;
 
 // Writes what a fresh look needs to know about the task under way, since each
-// look during a task starts a conversation of its own to stay quick.
+// look during a task starts a conversation of its own to stay quick: the
+// steps, marked done or clicked, and what was said last.
 export function brief(plan: Plan, last: string) {
-  const steps = plan.steps.map(
-    (step, index) =>
-      `${index + 1}. ${step.done ? "(done) " : ""}${step.instruction}`,
-  );
+  const steps = plan.steps.map((step, index) => {
+    const mark = step.done ? "(done) " : step.clicked ? "(clicked) " : "";
+
+    return `${index + 1}. ${mark}${step.instruction}`;
+  });
 
   return [
     `Task under way, already recorded with plan: ${plan.task}`,
