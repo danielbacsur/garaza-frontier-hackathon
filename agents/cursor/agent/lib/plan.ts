@@ -23,7 +23,8 @@ export const Plan = z.object({
     .max(40)
     .describe(
       "The language the user wrote their request in, named in English, " +
-        "such as English or Hungarian, whatever language the screen is in.",
+        "judged from their words alone and never from the screen: an " +
+        "English request on a Hungarian screen is English.",
     ),
   requirements: z
     .array(z.string().max(80))
