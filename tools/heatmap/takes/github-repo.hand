@@ -1,0 +1,25 @@
+# GitHub: a new private repository with a README.
+# Starts on the github.com dashboard.
+rest 1200
+click 1217 155
+rest 400
+click 1150 220
+rest 3000
+click 828 349
+type second-cursor-demo
+rest 600
+click 750 452
+type Recorded with the second cursor heatmap pipeline.
+rest 600
+click 987 567
+rest 300
+click 838 663
+rest 500
+click 1014 637
+rest 700
+move 978 693
+rest 600
+click 988 811
+rest 3800
+move 700 420
+rest 1800

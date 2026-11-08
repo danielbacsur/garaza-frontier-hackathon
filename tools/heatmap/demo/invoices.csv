@@ -1,0 +1,61 @@
+Invoice,Date,Customer,Service,Net (HUF),VAT (HUF),Gross (HUF),Status
+KT-2026-1041,2026-10-01,Tisza Építő Zrt.,Bookkeeping,131000,35370,166370,Overdue
+KT-2026-1042,2026-10-01,Mátra Bútor Kft.,Tax return,47000,12690,59690,Paid
+KT-2026-1043,2026-10-02,Zöldmező Kertészet Kft.,Tax return,59000,15930,74930,Paid
+KT-2026-1044,2026-10-02,Mátra Bútor Kft.,Consulting,132000,35640,167640,Paid
+KT-2026-1045,2026-10-03,Zöldmező Kertészet Kft.,Consulting,166000,44820,210820,Paid
+KT-2026-1046,2026-10-03,Balaton Pékség Bt.,Tax return,153000,41310,194310,Overdue
+KT-2026-1047,2026-10-04,Hegyalja Borászat Bt.,Bookkeeping,313000,84510,397510,Open
+KT-2026-1048,2026-10-04,Mátra Bútor Kft.,Audit support,75000,20250,95250,Overdue
+KT-2026-1049,2026-10-05,Duna Logisztika Kft.,Tax return,104000,28080,132080,Paid
+KT-2026-1050,2026-10-05,Alföld Agrár Zrt.,Audit support,124000,33480,157480,Overdue
+KT-2026-1051,2026-10-06,Zöldmező Kertészet Kft.,Bookkeeping,104000,28080,132080,Paid
+KT-2026-1052,2026-10-06,Hegyalja Borászat Bt.,Payroll,104000,28080,132080,Paid
+KT-2026-1053,2026-10-07,Pannon Gépház Kft.,Bookkeeping,111000,29970,140970,Open
+KT-2026-1054,2026-10-07,Balaton Pékség Bt.,Audit support,256000,69120,325120,Paid
+KT-2026-1055,2026-10-08,Duna Logisztika Kft.,Payroll,187000,50490,237490,Paid
+KT-2026-1056,2026-10-08,Zöldmező Kertészet Kft.,Payroll,247000,66690,313690,Paid
+KT-2026-1057,2026-10-09,Zöldmező Kertészet Kft.,Bookkeeping,319000,86130,405130,Open
+KT-2026-1058,2026-10-09,Duna Logisztika Kft.,Bookkeeping,313000,84510,397510,Paid
+KT-2026-1059,2026-10-10,Zöldmező Kertészet Kft.,Payroll,94000,25380,119380,Paid
+KT-2026-1060,2026-10-10,Mátra Bútor Kft.,Bookkeeping,103000,27810,130810,Paid
+KT-2026-1061,2026-10-11,Zöldmező Kertészet Kft.,Consulting,328000,88560,416560,Paid
+KT-2026-1062,2026-10-11,Duna Logisztika Kft.,Consulting,69000,18630,87630,Open
+KT-2026-1063,2026-10-12,Tisza Építő Zrt.,Audit support,76000,20520,96520,Paid
+KT-2026-1064,2026-10-12,Balaton Pékség Bt.,Bookkeeping,99000,26730,125730,Overdue
+KT-2026-1065,2026-10-13,Balaton Pékség Bt.,Payroll,49000,13230,62230,Paid
+KT-2026-1066,2026-10-13,Duna Logisztika Kft.,Tax return,250000,67500,317500,Overdue
+KT-2026-1067,2026-10-14,Duna Logisztika Kft.,Audit support,121000,32670,153670,Open
+KT-2026-1068,2026-10-14,Zöldmező Kertészet Kft.,Tax return,90000,24300,114300,Paid
+KT-2026-1069,2026-10-15,Mátra Bútor Kft.,Tax return,62000,16740,78740,Paid
+KT-2026-1070,2026-10-15,Balaton Pékség Bt.,Audit support,99000,26730,125730,Paid
+KT-2026-1071,2026-10-16,Alföld Agrár Zrt.,Audit support,115000,31050,146050,Paid
+KT-2026-1072,2026-10-16,Hegyalja Borászat Bt.,Tax return,75000,20250,95250,Paid
+KT-2026-1073,2026-10-17,Alföld Agrár Zrt.,Consulting,121000,32670,153670,Paid
+KT-2026-1074,2026-10-17,Duna Logisztika Kft.,Payroll,66000,17820,83820,Open
+KT-2026-1075,2026-10-18,Mátra Bútor Kft.,Audit support,326000,88020,414020,Paid
+KT-2026-1076,2026-10-18,Mátra Bútor Kft.,Consulting,130000,35100,165100,Paid
+KT-2026-1077,2026-10-19,Balaton Pékség Bt.,Payroll,169000,45630,214630,Paid
+KT-2026-1078,2026-10-19,Balaton Pékség Bt.,Audit support,317000,85590,402590,Open
+KT-2026-1079,2026-10-20,Hegyalja Borászat Bt.,Audit support,321000,86670,407670,Open
+KT-2026-1080,2026-10-20,Hegyalja Borászat Bt.,Payroll,170000,45900,215900,Open
+KT-2026-1081,2026-10-21,Zöldmező Kertészet Kft.,Audit support,66000,17820,83820,Paid
+KT-2026-1082,2026-10-21,Zöldmező Kertészet Kft.,Audit support,156000,42120,198120,Paid
+KT-2026-1083,2026-10-22,Zöldmező Kertészet Kft.,Bookkeeping,259000,69930,328930,Paid
+KT-2026-1084,2026-10-22,Balaton Pékség Bt.,Payroll,111000,29970,140970,Paid
+KT-2026-1085,2026-10-23,Pannon Gépház Kft.,Tax return,87000,23490,110490,Paid
+KT-2026-1086,2026-10-23,Pannon Gépház Kft.,Payroll,79000,21330,100330,Open
+KT-2026-1087,2026-10-24,Zöldmező Kertészet Kft.,Bookkeeping,166000,44820,210820,Paid
+KT-2026-1088,2026-10-24,Alföld Agrár Zrt.,Bookkeeping,247000,66690,313690,Overdue
+KT-2026-1089,2026-10-25,Mátra Bútor Kft.,Payroll,139000,37530,176530,Paid
+KT-2026-1090,2026-10-25,Zöldmező Kertészet Kft.,Consulting,98000,26460,124460,Open
+KT-2026-1091,2026-10-26,Duna Logisztika Kft.,Bookkeeping,103000,27810,130810,Overdue
+KT-2026-1092,2026-10-26,Pannon Gépház Kft.,Consulting,64000,17280,81280,Paid
+KT-2026-1093,2026-10-27,Pannon Gépház Kft.,Audit support,74000,19980,93980,Paid
+KT-2026-1094,2026-10-27,Balaton Pékség Bt.,Payroll,64000,17280,81280,Open
+KT-2026-1095,2026-10-28,Hegyalja Borászat Bt.,Consulting,47000,12690,59690,Open
+KT-2026-1096,2026-10-28,Hegyalja Borászat Bt.,Bookkeeping,121000,32670,153670,Paid
+KT-2026-1097,2026-10-29,Balaton Pékség Bt.,Audit support,161000,43470,204470,Overdue
+KT-2026-1098,2026-10-29,Tisza Építő Zrt.,Bookkeeping,79000,21330,100330,Paid
+KT-2026-1099,2026-10-30,Balaton Pékség Bt.,Consulting,162000,43740,205740,Paid
+KT-2026-1100,2026-10-30,Tisza Építő Zrt.,Payroll,187000,50490,237490,Paid

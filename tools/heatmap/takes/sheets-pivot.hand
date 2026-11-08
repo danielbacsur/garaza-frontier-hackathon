@@ -1,0 +1,45 @@
+# Google Sheets: a pivot table of October's invoices by customer, largest first.
+# Starts on the Sheets home page, the invoices (tab-separated) on the clipboard.
+rest 1200
+click 310 342
+rest 3800
+# Gemini opens beside every new sheet.
+click 1374 231
+rest 500
+click 246 154
+key cmd+a
+type October invoices
+key return
+rest 400
+click 189 328
+key cmd+v
+rest 1800
+move 560 600
+rest 1100
+click 314 181
+rest 500
+click 366 591
+rest 1300
+click 869 702
+rest 2600
+click 1090 707
+rest 400
+click 1127 480
+rest 1400
+move 1010 640
+scroll -8
+rest 500
+click 1090 737
+rest 400
+click 1135 658
+rest 1500
+click 1066 556
+click 1113 635
+rest 700
+click 959 556
+click 977 635
+rest 1000
+move 300 358
+rest 1300
+move 322 553
+rest 1800
