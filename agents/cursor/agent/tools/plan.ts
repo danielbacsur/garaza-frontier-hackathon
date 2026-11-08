@@ -29,35 +29,37 @@ const Plan = z.object({
     .array(Step)
     .max(30)
     .describe("One step for each single action, in order."),
+  say: z
+    .string()
+    .max(200)
+    .optional()
+    .describe(
+      "Your reply when nothing is pointed at along with the plan, such as " +
+        "one short sentence once every step is done.",
+    ),
 });
 
 export default defineTool({
   description:
     "Record the steps of a task that takes several, in order, marking the " +
     "ones the screen shows are done. Pass the complete plan on every call, " +
-    "or an empty list of steps to drop it. Call it on its own, then point " +
-    "at the first step that is not done.",
+    "or an empty list of steps to drop it. Call it together with point_at " +
+    "in the same step, or alone with say when there is nothing to point " +
+    "at. This ends your turn.",
+
+  // The plan and the pointer are made in one step, so the turn ends with
+  // them and spares a second model call that would only repeat the plan.
+  endsTurn: true,
 
   inputSchema: Plan,
 
   outputSchema: Plan.extend({ remaining: z.number() }),
 
   // Counts what is left, which the desktop app uses to keep watching the
-  // screen and the model uses to know when to say it is finished.
-  async execute({ task, requirements, steps }) {
+  // screen and to know when the task is finished.
+  async execute({ task, requirements, steps, say }) {
     const remaining = steps.filter((step) => !step.done).length;
 
-    return { task, requirements, steps, remaining };
+    return { task, requirements, steps, say, remaining };
   },
-
-  // The plan is already in the call's input, so the model only needs to be
-  // told what comes next rather than given a second copy of every step.
-  toModelOutput: ({ steps, remaining }) => ({
-    type: "text",
-    value: remaining
-      ? `Steps left: ${remaining}. Guide the first one that is not done.`
-      : steps.length
-        ? "Every step is done. Tell the user in one short sentence."
-        : "The plan is cleared.",
-  }),
 });
