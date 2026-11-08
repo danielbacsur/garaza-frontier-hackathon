@@ -48,20 +48,40 @@ pub struct Picture {
     pub thumbnail: Vec<u8>,
 }
 
-const THUMBNAIL: (u32, u32) = (48, 32);
-const CHANGED_LEVEL: u8 = 12;
+// The small grey copy kept of every picture, fine enough that a tick in a
+// box still shows, and how much a cell of it must change by to count.
+const THUMBNAIL: (u32, u32) = (192, 128);
+const CHANGED_LEVEL: u8 = 40;
+
+// How many cells must change for a change nobody caused to count: more than
+// a caret blinking or a clock ticking take, which are never worth a look.
+const WIDE_CELLS: usize = 6;
 
 impl Picture {
-    // Tells whether two pictures show something different, comparing small
-    // grey copies so that noise in the encoding never counts as a change.
+    // Counts the cells of the small grey copies that differ by more than a
+    // shade, so that a button merely lit under the mouse never counts.
+    fn changed_cells(&self, other: &Picture) -> usize {
+        self.thumbnail
+            .iter()
+            .zip(&other.thumbnail)
+            .filter(|(a, b)| a.abs_diff(**b) > CHANGED_LEVEL)
+            .count()
+    }
+
+    // Tells whether two pictures show something different anywhere, however
+    // small, which after the person acted is enough to be worth a look.
     pub fn differs(&self, other: &Picture) -> bool {
         self.frame != other.frame
             || self.thumbnail.len() != other.thumbnail.len()
-            || self
-                .thumbnail
-                .iter()
-                .zip(&other.thumbnail)
-                .any(|(a, b)| a.abs_diff(*b) > CHANGED_LEVEL)
+            || self.changed_cells(other) > 0
+    }
+
+    // Tells whether two pictures differ widely, by more than a caret or a
+    // clock would, which a change nobody caused has to be worth a look.
+    pub fn differs_widely(&self, other: &Picture) -> bool {
+        self.frame != other.frame
+            || self.thumbnail.len() != other.thumbnail.len()
+            || self.changed_cells(other) >= WIDE_CELLS
     }
 }
 
@@ -334,8 +354,8 @@ mod tests {
         assert_eq!(FRAME.place(640.0, 300.0), None);
     }
 
-    // Counts a change only when part of the picture really looks different,
-    // so tiny differences in shading never wake the agent up.
+    // Counts a change only when a cell of the picture really looks different,
+    // and a wide one only when more cells change than a caret blinking does.
     #[test]
     fn notices_only_real_changes() {
         let picture = |thumbnail: Vec<u8>| Picture {
@@ -344,13 +364,17 @@ mod tests {
             ..Picture::default()
         };
 
-        let before = picture(vec![100; 8]);
-        let shaded = picture(vec![104; 8]);
-        let mut changed = vec![100; 8];
+        let before = picture(vec![100; 16]);
+        let shaded = picture(vec![130; 16]);
+        let mut ticked = vec![100; 16];
+        let mut loaded = vec![100; 16];
 
-        changed[3] = 180;
+        ticked[3] = 180;
+        loaded[..6].fill(180);
 
         assert!(!before.differs(&shaded));
-        assert!(before.differs(&picture(changed)));
+        assert!(before.differs(&picture(ticked.clone())));
+        assert!(!before.differs_widely(&picture(ticked)));
+        assert!(before.differs_widely(&picture(loaded)));
     }
 }
