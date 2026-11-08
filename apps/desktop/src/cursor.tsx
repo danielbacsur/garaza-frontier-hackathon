@@ -157,6 +157,8 @@ export function Cursor() {
   const shown = useRef<number | undefined>(undefined);
   const asked = useRef<string | undefined>(undefined);
   const lastClick = useRef<Click | undefined>(undefined);
+  const restarted = useRef(false);
+  const queued = useRef(false);
   const request = useRef("");
   const said = useRef("");
   const here = useRef<Spot | undefined>(undefined);
@@ -441,6 +443,14 @@ export function Cursor() {
         if (isCurrent()) {
           busy.current = false;
           asked.current = undefined;
+          restarted.current = false;
+
+          // Changes that arrived while this turn was answering get one look.
+          if (queued.current) {
+            queued.current = false;
+
+            if (isPlanned() || guiding.current) void run(remembered(), true);
+          }
         }
       }
     }
@@ -482,6 +492,16 @@ export function Cursor() {
       // A step that was pointed at gets one look, not one after every click.
       guiding.current = false;
       retried.current = false;
+
+      // A turn starts over once for a newer screen; on a screen that keeps
+      // changing it would otherwise never get to answer, so later changes
+      // wait for its answer and get one look of their own after it.
+      if (busy.current && restarted.current) {
+        queued.current = true;
+        return;
+      }
+
+      restarted.current = busy.current;
 
       if (resting.current) {
         resting.current = false;
@@ -548,6 +568,8 @@ export function Cursor() {
       shown.current = undefined;
       asked.current = undefined;
       lastClick.current = undefined;
+      restarted.current = false;
+      queued.current = false;
       request.current = "";
       said.current = "";
       reset();
