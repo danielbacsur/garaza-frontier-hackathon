@@ -5,7 +5,7 @@ mod watch;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Condvar, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use capture::Picture;
 use serde::Serialize;
@@ -27,11 +27,6 @@ const FOLLOW_INTERVAL: Duration = Duration::from_millis(16);
 struct Shot {
     generation: u64,
     picture: Option<Picture>,
-
-    // From when the person's actions are news to the agent: since the
-    // picture was taken, or since they asked about it.
-    #[serde(skip)]
-    since: Option<Instant>,
 
     // Whether the picture under this number is still being taken.
     #[serde(skip)]
@@ -223,7 +218,6 @@ fn publish(app: &AppHandle, picture: Picture, taken_under: u64) -> bool {
 
     shot.generation += 1;
     shot.picture = Some(picture);
-    shot.since = Some(Instant::now());
     true
 }
 
@@ -236,7 +230,6 @@ fn picture_later(app: &AppHandle, front: Option<i32>) {
 
         shot.generation += 1;
         shot.picture = None;
-        shot.since = Some(Instant::now());
         shot.pending = true;
         shot.generation
     };
@@ -276,7 +269,6 @@ fn summon(app: &AppHandle) -> tauri::Result<()> {
     let front = capture::front_app().filter(|&id| id != ours).or(remembered);
 
     picture_later(app, front);
-    watch::forget_actions(app);
     *app.state::<FrontApp>().0.lock().expect("front lock") = front;
 
     place_panel(&panel)?;
@@ -366,10 +358,6 @@ fn think(app: AppHandle, question: String) -> tauri::Result<()> {
 
     // A new question starts beside the mouse, not on the last spot.
     app.state::<Pointing>().0.store(false, Ordering::Relaxed);
-
-    // Typing the question is no step of a task, so only later actions count.
-    app.state::<Screen>().0.lock().expect("screen lock").since =
-        Some(Instant::now());
 
     if cover_display(&cursor, (x, y))?.is_none() {
         journal::event("think: no display under the mouse");

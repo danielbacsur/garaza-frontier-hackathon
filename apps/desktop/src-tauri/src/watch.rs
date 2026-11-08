@@ -15,13 +15,11 @@ const KEEP_LOOKING: Duration = Duration::from_secs(6);
 const GIVE_UP: Duration = Duration::from_secs(5 * 60);
 
 // A task being followed: what the screen looked like when the agent last
-// spoke, when the person last did anything, and when their last action that
-// led to a change happened.
+// looked, and when the person last did anything.
 #[derive(Clone)]
 struct Task {
     baseline: Option<Picture>,
     acted: Instant,
-    answered: Instant,
 }
 
 #[derive(Default)]
@@ -73,33 +71,22 @@ fn last_action(now: Instant) -> Option<Instant> {
 // cursor turns it off as each turn starts and on again once a turn ends.
 #[tauri::command]
 pub fn watch(app: AppHandle, on: bool) {
-    let (baseline, since) = {
+    let baseline = {
         let shot = app.state::<Screen>();
         let shot = shot.0.lock().expect("screen lock");
 
-        (shot.picture.clone(), shot.since)
+        shot.picture.clone()
     };
 
-    // Whatever the person did while the agent was answering counts too.
-    let since = since.unwrap_or_else(Instant::now);
+    // A page can still be changing from an action taken before the agent
+    // looked, so the screen is compared again for a while after it.
+    let now = Instant::now();
+    let acted = last_action(now).unwrap_or(now);
 
     journal::event(if on { "watch: on" } else { "watch: off" });
 
-    *app.state::<Watch>().0.lock().expect("watch lock") = on.then(|| Task {
-        baseline,
-        acted: since,
-        answered: since,
-    });
-}
-
-// Forgets whatever was done so far, because pressing the hotkey is itself a
-// key press and must never read as progress on the task.
-pub fn forget_actions(app: &AppHandle) {
-    if let Some(task) =
-        app.state::<Watch>().0.lock().expect("watch lock").as_mut()
-    {
-        task.answered = Instant::now();
-    }
+    *app.state::<Watch>().0.lock().expect("watch lock") =
+        on.then(|| Task { baseline, acted });
 }
 
 // Stops following the task when the person dismisses the cursor, so that
@@ -130,7 +117,7 @@ fn settled(app_id: i32) -> Option<Picture> {
 }
 
 // Hands over the task for a look once the person acted and paused, again and
-// again for a few seconds, since a page can take a while to change after it.
+// again for a few seconds, since a page can keep changing after an action.
 fn due(app: &AppHandle, now: Instant) -> Option<Task> {
     let state = app.state::<Watch>();
     let mut watch = state.0.lock().expect("watch lock");
@@ -148,8 +135,7 @@ fn due(app: &AppHandle, now: Instant) -> Option<Task> {
     }
 
     let since = now.duration_since(task.acted);
-    let unanswered = task.acted > task.answered;
-    let ready = unanswered && since >= PAUSE && since <= KEEP_LOOKING;
+    let ready = since >= PAUSE && since <= KEEP_LOOKING;
 
     if !ready {
         return None;
@@ -181,14 +167,10 @@ fn follow(app: AppHandle) {
         thread::sleep(TICK);
 
         if busy() {
-            forget_actions(&app);
             continue;
         }
 
-        let Some(Task {
-            baseline, acted, ..
-        }) = due(&app, Instant::now())
-        else {
+        let Some(Task { baseline, .. }) = due(&app, Instant::now()) else {
             continue;
         };
 
@@ -220,7 +202,6 @@ fn follow(app: AppHandle) {
         };
 
         task.baseline = Some(picture.clone());
-        task.answered = acted;
         drop(watch);
 
         if !publish(&app, picture, generation) {
