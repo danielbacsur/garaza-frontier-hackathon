@@ -1,5 +1,3 @@
-use image::RgbImage;
-use image::imageops::replace;
 use serde::Serialize;
 
 // Where a window sits on screen, in points from the top left of the main
@@ -87,38 +85,22 @@ impl Picture {
     }
 }
 
-// Puts the menu bar's strip above the window's picture, with whatever
-// screen lies between them left dark, so the whole shows at its true place
-// on screen and the menus every app keeps up there can be pointed at too.
-// A strip of another width, from a window hanging off the screen's edge,
-// or a window not below the bar, leaves the picture as it was.
-pub fn stacked(
-    window: RgbImage,
-    strip: Option<RgbImage>,
-    frame: Frame,
-) -> (RgbImage, Frame) {
-    let fits = |strip: &RgbImage| {
-        strip.width() == window.width() && frame.y >= f64::from(strip.height())
-    };
+// The place on screen a window is pictured with: from the display's top
+// left corner, where the menu bar keeps every app's menus, down to the
+// window's bottom right, cut at the display's edges, so the menus, any menu
+// opened from them and whatever else lies over the window show at their
+// true place. A window not below the menu bar is pictured alone.
+pub fn seen(window: Frame, menu_bar: f64, display: (f64, f64)) -> Frame {
+    if window.y < menu_bar {
+        return window;
+    }
 
-    let Some(strip) = strip.filter(fits) else {
-        return (window, frame);
-    };
-
-    let top = frame.y.round() as u32;
-    let mut whole = RgbImage::new(window.width(), top + window.height());
-
-    replace(&mut whole, &strip, 0, 0);
-    replace(&mut whole, &window, 0, i64::from(top));
-
-    let frame = Frame {
-        x: frame.x,
+    Frame {
+        x: 0.0,
         y: 0.0,
-        width: frame.width,
-        height: frame.y + frame.height,
-    };
-
-    (whole, frame)
+        width: (window.x + window.width).min(display.0),
+        height: (window.y + window.height).min(display.1),
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -145,31 +127,35 @@ pub fn capture(_app_id: i32) -> Option<Picture> {
 
 #[cfg(target_os = "macos")]
 mod macos {
+    use std::ffi::c_void;
     use std::io::Cursor;
 
     use base64::Engine;
     use base64::engine::general_purpose::STANDARD;
+    use core_foundation::array::CFArray;
     use core_foundation::base::{CFType, TCFType};
     use core_foundation::dictionary::CFDictionary;
     use core_foundation::number::CFNumber;
     use core_foundation::string::CFString;
+    use core_graphics::display::CGDisplay;
     use core_graphics::image::CGImage;
     use core_graphics::window::{
-        copy_window_info, create_image, kCGNullWindowID, kCGWindowBounds,
-        kCGWindowImageBoundsIgnoreFraming, kCGWindowImageNominalResolution,
-        kCGWindowLayer, kCGWindowListExcludeDesktopElements,
+        copy_window_info, create_image, create_image_from_array,
+        kCGNullWindowID, kCGWindowBounds, kCGWindowImageBoundsIgnoreFraming,
+        kCGWindowImageNominalResolution, kCGWindowLayer,
+        kCGWindowListExcludeDesktopElements,
         kCGWindowListOptionIncludingWindow, kCGWindowListOptionOnScreenOnly,
         kCGWindowName, kCGWindowNumber, kCGWindowOwnerPID,
     };
     use core_graphics_types::geometry::{CGPoint, CGRect, CGSize};
     use image::codecs::jpeg::JpegEncoder;
-    use image::imageops::FilterType;
+    use image::imageops::{FilterType, crop_imm};
     use image::{DynamicImage, RgbImage};
     use objc2_app_kit::{
         NSApplicationActivationOptions, NSRunningApplication, NSWorkspace,
     };
 
-    use super::{Frame, Picture, THUMBNAIL, stacked};
+    use super::{Frame, Picture, THUMBNAIL, seen};
 
     const JPEG_QUALITY: u8 = 80;
     const MIN_SIZE: f64 = 40.0;
@@ -319,18 +305,52 @@ mod macos {
         )?)
     }
 
-    // Pictures the menu bar's strip above a window, as wide as the window,
-    // with everything the screen shows there.
-    fn shoot_strip(x: f64, width: f64, height: f64) -> Option<RgbImage> {
-        let strip =
-            CGRect::new(&CGPoint::new(x, 0.0), &CGSize::new(width, height));
+    // Pictures a part of the screen as a person sees it, with every window
+    // on it in front of or behind the one in use, such as a menu dropped
+    // from the menu bar, except this app's own: the cursor and the prompt.
+    fn shoot_screen(frame: Frame) -> Option<RgbImage> {
+        let own = i64::from(std::process::id());
+        let windows =
+            copy_window_info(kCGWindowListOptionOnScreenOnly, kCGNullWindowID)?;
 
-        pixels(create_image(
-            strip,
-            kCGWindowListOptionOnScreenOnly,
-            kCGNullWindowID,
+        // The window server takes the ids themselves as the array's values,
+        // not numbers wrapped as objects.
+        let shown: Vec<*const c_void> = windows
+            .iter()
+            .filter_map(|window| {
+                let window = unsafe {
+                    CFDictionary::<CFString, CFType>::wrap_under_get_rule(
+                        *window as _,
+                    )
+                };
+
+                if number(&window, unsafe { kCGWindowOwnerPID })? == own {
+                    return None;
+                }
+
+                let id = number(&window, unsafe { kCGWindowNumber })? as usize;
+
+                Some(id as *const c_void)
+            })
+            .collect();
+
+        let rect = CGRect::new(
+            &CGPoint::new(frame.x, frame.y),
+            &CGSize::new(frame.width, frame.height),
+        );
+
+        let image = create_image_from_array(
+            rect,
+            CFArray::from_copyable(&shown),
             kCGWindowImageNominalResolution,
-        )?)
+        )?;
+
+        // A part cut short by the screen's edge would no longer match the
+        // place it is meant to show.
+        let whole = image.width() == frame.width.round() as usize
+            && image.height() == frame.height.round() as usize;
+
+        whole.then(|| pixels(image)).flatten()
     }
 
     // Turns what the window server handed over into plain RGB pixels.
@@ -350,22 +370,38 @@ mod macos {
         RgbImage::from_raw(width as u32, height as u32, rgb)
     }
 
-    // Pictures the window in use with the menu bar above it, scaled down for
-    // the model, with a small grey copy of the window alone kept for telling
-    // pictures apart, so the clock in the bar never counts as a change.
+    // Pictures the window in use as a person sees it, from the menu bar down,
+    // scaled down for the model, with a small grey copy of the window's own
+    // part kept for telling pictures apart, so that a menu opening over it
+    // counts as a change while the clock in the bar never does. A window the
+    // screen cannot be pictured around is pictured alone.
     pub fn capture(app_id: i32) -> Option<Picture> {
         let window = front_window(app_id)?;
-        let alone = shoot(window.id)?;
+        let display = CGDisplay::main().bounds().size;
+        let wanted = seen(
+            window.frame,
+            menu_bar().unwrap_or(0.0),
+            (display.width, display.height),
+        );
 
-        let thumbnail = DynamicImage::ImageRgb8(alone.clone())
+        let (full, frame) = match shoot_screen(wanted) {
+            Some(full) => (full, wanted),
+            None => (shoot(window.id)?, window.frame),
+        };
+
+        let thumbnail = crop_imm(
+            &full,
+            (window.frame.x - frame.x).max(0.0).round() as u32,
+            (window.frame.y - frame.y).round() as u32,
+            window.frame.width.round() as u32,
+            window.frame.height.round() as u32,
+        )
+        .to_image();
+        let thumbnail = DynamicImage::ImageRgb8(thumbnail)
             .resize_exact(THUMBNAIL.0, THUMBNAIL.1, FilterType::Triangle)
             .to_luma8()
             .into_raw();
 
-        let strip = menu_bar().and_then(|bar| {
-            shoot_strip(window.frame.x, window.frame.width, bar)
-        });
-        let (full, frame) = stacked(alone, strip, window.frame);
         let width = (f64::from(full.width()) * SCALE).round() as u32;
         let height = (f64::from(full.height()) * SCALE).round() as u32;
 
@@ -407,9 +443,7 @@ mod macos {
 
 #[cfg(test)]
 mod tests {
-    use image::{Rgb, RgbImage};
-
-    use super::{Frame, Picture, stacked};
+    use super::{Frame, Picture, seen};
 
     const FRAME: Frame = Frame {
         x: 100.0,
@@ -418,32 +452,23 @@ mod tests {
         height: 600.0,
     };
 
-    // Stacks the menu bar's strip above the window at its true distance,
-    // and leaves the window alone when the strip is of another width.
+    // Pictures from the display's top left corner down to the window's
+    // bottom right, cut at the display's edges, unless the window sits in
+    // the menu bar.
     #[test]
-    fn stacks_the_menu_bar_above_the_window() {
-        let frame = Frame {
-            x: 10.0,
-            y: 3.0,
-            width: 4.0,
-            height: 2.0,
-        };
-        let window = RgbImage::from_pixel(4, 2, Rgb([200, 200, 200]));
-        let strip = RgbImage::from_pixel(4, 2, Rgb([50, 50, 50]));
-        let (whole, placed) = stacked(window.clone(), Some(strip), frame);
+    fn sees_from_the_menu_bar_down_to_the_window() {
+        let whole = seen(FRAME, 33.0, (1512.0, 982.0));
 
-        assert_eq!((whole.width(), whole.height()), (4, 5));
-        assert_eq!(whole.get_pixel(0, 0).0, [50, 50, 50]);
-        assert_eq!(whole.get_pixel(0, 2).0, [0, 0, 0]);
-        assert_eq!(whole.get_pixel(0, 3).0, [200, 200, 200]);
-        assert_eq!(placed.y, 0.0);
-        assert_eq!(placed.height, 5.0);
+        assert_eq!((whole.x, whole.y), (0.0, 0.0));
+        assert_eq!((whole.width, whole.height), (900.0, 650.0));
 
-        let narrow = RgbImage::from_pixel(3, 2, Rgb([50, 50, 50]));
-        let (same, kept) = stacked(window, Some(narrow), frame);
+        let low = seen(FRAME, 33.0, (850.0, 600.0));
 
-        assert_eq!((same.width(), same.height()), (4, 2));
-        assert_eq!(kept, frame);
+        assert_eq!((low.width, low.height), (850.0, 600.0));
+
+        let high = Frame { y: 20.0, ..FRAME };
+
+        assert_eq!(seen(high, 33.0, (1512.0, 982.0)), high);
     }
 
     // Places parts of the window on screen from its top left corner, which
