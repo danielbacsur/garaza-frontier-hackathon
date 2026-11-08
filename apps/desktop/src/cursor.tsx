@@ -21,6 +21,7 @@ import pointer from "./assets/cursor.png";
 type Spot = { x: number; y: number };
 type Size = { width: number; height: number };
 type Request = Spot & { question: string };
+type Changed = { click: [number, number] | null };
 type Motion = "still" | "trailing" | "gliding";
 
 const POINTER_WIDTH = 16;
@@ -108,6 +109,19 @@ async function isMouseNear(bubble: HTMLElement, margin: number) {
     y > box.top - margin &&
     y < box.bottom + margin
   );
+}
+
+// Writes the app's own message for a screen that changed, saying where the
+// person clicked when they did, so the agent can tell whether they took the
+// step it showed.
+function automatic(click: [number, number] | null) {
+  if (!click) return AUTOMATIC;
+
+  const [across, down] = click.map((part) => Math.round(part * 100));
+
+  const where = `${across}% across and ${down}% down the window`;
+
+  return `${AUTOMATIC}\n(The user clicked ${where}.)`;
 }
 
 // Places the bubble along one axis, measured from the cursor's tip, so that
@@ -341,7 +355,7 @@ export function Cursor() {
 
     // The screen moved on while a task or a pointed step was under way, so
     // the agent looks again, from beside the mouse if it was put away.
-    const changing = listen("changed", async () => {
+    const changing = listen<Changed>("changed", async ({ payload }) => {
       if (!isPlanned() && !guiding.current) return;
 
       // A step that was pointed at gets one look, not one after every click.
@@ -352,15 +366,7 @@ export function Cursor() {
         put(beside(await toOverlay(await mouseInPoints())));
       }
 
-      void run(AUTOMATIC, true);
-    });
-
-    // The person stopped working on the task, so the cursor says its last
-    // words again and fades as it would after a single question.
-    const abandoning = listen("abandoned", () => {
-      plan.current = undefined;
-      guiding.current = false;
-      linger(said.current);
+      void run(automatic(payload.click), true);
     });
 
     // Moves that arrive after the cursor was sent away belong to a turn that
@@ -421,7 +427,6 @@ export function Cursor() {
       const listeners = [
         asking,
         changing,
-        abandoning,
         pointing,
         trailing,
         sleeping,

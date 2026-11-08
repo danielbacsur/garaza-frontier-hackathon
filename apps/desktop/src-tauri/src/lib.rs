@@ -42,6 +42,11 @@ struct Screen(Mutex<Shot>, Condvar);
 #[derive(Default)]
 struct Pointing(AtomicBool);
 
+// Where the person last clicked since the agent last spoke, in screen
+// points, so the next look can say whether they took the step shown.
+#[derive(Default)]
+struct Clicked(Mutex<Option<(f64, f64)>>);
+
 // The app that was in front when the prompt opened, which gets focus back.
 #[derive(Default)]
 struct FrontApp(Mutex<Option<i32>>);
@@ -144,6 +149,7 @@ fn follow_cursor(app: AppHandle) {
     let panel = app.get_webview_window("panel").expect("panel window");
     let cursor = app.get_webview_window("cursor").expect("cursor window");
     let mut last = (0.0, 0.0);
+    let mut last_click = 0.0;
     let mut covered = None;
     let mut pointed = false;
 
@@ -153,6 +159,16 @@ fn follow_cursor(app: AppHandle) {
         let Ok(mouse) = mouse_points(&panel) else {
             continue;
         };
+
+        // A click shows as the time since the last one dropping back, and
+        // the mouse is still on it this soon after.
+        let since_click = watch::since_click();
+
+        if since_click < last_click {
+            *app.state::<Clicked>().0.lock().expect("click lock") = Some(mouse);
+        }
+
+        last_click = since_click;
 
         let moved = mouse != last;
         let was_pointed = pointed;
@@ -483,6 +499,7 @@ pub fn run() {
         .manage(Screen::default())
         .manage(FrontApp::default())
         .manage(Pointing::default())
+        .manage(Clicked::default())
         .manage(watch::Watch::default())
         .setup(|app| {
             #[cfg(target_os = "macos")]

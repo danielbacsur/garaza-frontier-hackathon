@@ -18,6 +18,17 @@ impl Frame {
 
         inside.then(|| (self.x + x * self.width, self.y + y * self.height))
     }
+
+    // Turns a place on screen into parts of the window's width and height,
+    // the reverse of placing, for a place that lies inside the window.
+    pub fn fraction(&self, x: f64, y: f64) -> Option<(f64, f64)> {
+        let across = (x - self.x) / self.width;
+        let down = (y - self.y) / self.height;
+        let inside =
+            (0.0..=1.0).contains(&across) && (0.0..=1.0).contains(&down);
+
+        inside.then_some((across, down))
+    }
 }
 
 // A picture of the window in use, scaled to screen points and encoded as a
@@ -293,6 +304,15 @@ mod tests {
         assert_eq!(FRAME.place(0.0, 0.0), Some((100.0, 50.0)));
         assert_eq!(FRAME.place(0.5, 0.5), Some((500.0, 350.0)));
         assert_eq!(FRAME.place(1.0, 1.0), Some((900.0, 650.0)));
+    }
+
+    // Turns a click on the window back into the parts the agent points
+    // with, and leaves out a click anywhere else.
+    #[test]
+    fn measures_clicks_on_the_window() {
+        assert_eq!(FRAME.fraction(500.0, 350.0), Some((0.5, 0.5)));
+        assert_eq!(FRAME.fraction(100.0, 50.0), Some((0.0, 0.0)));
+        assert_eq!(FRAME.fraction(50.0, 350.0), None);
     }
 
     // Refuses spots outside the window, since a model that answers in

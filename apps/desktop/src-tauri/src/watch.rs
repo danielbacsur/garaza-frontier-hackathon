@@ -2,34 +2,42 @@ use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::capture::{self, Picture};
-use crate::{FrontApp, Screen, journal, publish};
+use crate::{Clicked, FrontApp, Screen, journal, publish};
 
 const TICK: Duration = Duration::from_millis(250);
+const LOOK: Duration = Duration::from_secs(1);
 const PAUSE: Duration = Duration::from_millis(400);
 const SETTLE: Duration = Duration::from_millis(150);
 const MAX_PICTURES: usize = 5;
-const KEEP_LOOKING: Duration = Duration::from_secs(6);
-const GIVE_UP: Duration = Duration::from_secs(5 * 60);
 
 // A task being followed: what the screen looked like when the agent last
-// looked, and when the person last did anything.
+// saw it, and when it was last compared with that.
 #[derive(Clone)]
 struct Task {
     baseline: Option<Picture>,
-    acted: Instant,
+    looked: Instant,
 }
 
 #[derive(Default)]
 pub struct Watch(Mutex<Option<Task>>);
 
+// What the cursor is told when the screen changed: where the person clicked
+// meanwhile, as parts of the pictured window, when they did.
+#[derive(Clone, Serialize)]
+struct Changed {
+    click: Option<(f64, f64)>,
+}
+
 #[cfg(target_os = "macos")]
 mod input {
     // Event kinds a person makes on purpose: mouse buttons going down and up,
     // drags, keys and scrolls, but never plain moves, which reading makes too.
-    const KINDS: [u32; 11] = [1, 2, 3, 4, 6, 7, 10, 22, 25, 26, 27];
+    const ACTIONS: [u32; 11] = [1, 2, 3, 4, 6, 7, 10, 22, 25, 26, 27];
+    const LEFT_MOUSE_DOWN: u32 = 1;
     const COMBINED_SESSION: i32 = 0;
 
     #[link(name = "CoreGraphics", kind = "framework")]
@@ -38,15 +46,25 @@ mod input {
         -> f64;
     }
 
-    // Reports how long ago the person last clicked, typed or scrolled, which
-    // macos keeps track of for every app without any extra permission.
+    // Reports how long ago an event of one kind last happened, which macos
+    // keeps track of for every app without any extra permission.
+    fn since(kind: u32) -> f64 {
+        unsafe {
+            CGEventSourceSecondsSinceLastEventType(COMBINED_SESSION, kind)
+        }
+    }
+
+    // Reports how long ago the person last clicked, typed or scrolled.
     pub fn since_action() -> f64 {
-        KINDS
+        ACTIONS
             .iter()
-            .map(|&kind| unsafe {
-                CGEventSourceSecondsSinceLastEventType(COMBINED_SESSION, kind)
-            })
+            .map(|&kind| since(kind))
             .fold(f64::INFINITY, f64::min)
+    }
+
+    // Reports how long ago the person last pressed the mouse button.
+    pub fn since_click() -> f64 {
+        since(LEFT_MOUSE_DOWN)
     }
 }
 
@@ -57,14 +75,17 @@ mod input {
     pub fn since_action() -> f64 {
         f64::INFINITY
     }
+
+    // Reports no click on systems without a reader yet.
+    pub fn since_click() -> f64 {
+        f64::INFINITY
+    }
 }
 
-// Works out when the person last acted, or nothing if they never have,
-// as a moment that can be compared with the task's own clock.
-fn last_action(now: Instant) -> Option<Instant> {
-    let since = Duration::try_from_secs_f64(input::since_action()).ok()?;
-
-    now.checked_sub(since)
+// Reports how long ago the person last pressed the mouse button, which is
+// how a click is noticed without any extra permission.
+pub fn since_click() -> f64 {
+    input::since_click()
 }
 
 // Starts following from the screen the agent was just shown, or stops; the
@@ -78,15 +99,15 @@ pub fn watch(app: AppHandle, on: bool) {
         shot.picture.clone()
     };
 
-    // A page can still be changing from an action taken before the agent
-    // looked, so the screen is compared again for a while after it.
-    let now = Instant::now();
-    let acted = last_action(now).unwrap_or(now);
+    // Only clicks from now on say anything about the step just shown.
+    *app.state::<Clicked>().0.lock().expect("click lock") = None;
 
     journal::event(if on { "watch: on" } else { "watch: off" });
 
-    *app.state::<Watch>().0.lock().expect("watch lock") =
-        on.then(|| Task { baseline, acted });
+    *app.state::<Watch>().0.lock().expect("watch lock") = on.then(|| Task {
+        baseline,
+        looked: Instant::now(),
+    });
 }
 
 // Stops following the task when the person dismisses the cursor, so that
@@ -116,31 +137,21 @@ fn settled(app_id: i32) -> Option<Picture> {
     Some(picture)
 }
 
-// Hands over the task for a look once the person acted and paused, again and
-// again for a few seconds, since a page can keep changing after an action.
+// Hands over the task for a look once a second while it is open, unless the
+// person is in the middle of doing something, however long they stay away.
 fn due(app: &AppHandle, now: Instant) -> Option<Task> {
     let state = app.state::<Watch>();
     let mut watch = state.0.lock().expect("watch lock");
     let task = watch.as_mut()?;
 
-    if let Some(acted) = last_action(now).filter(|&at| at > task.acted) {
-        task.acted = acted;
-    }
+    let acting = input::since_action() < PAUSE.as_secs_f64();
+    let soon = now.duration_since(task.looked) < LOOK;
 
-    if now.duration_since(task.acted) > GIVE_UP {
-        *watch = None;
-        journal::event("watch: gave up after a long pause");
-        let _ = app.emit_to("cursor", "abandoned", ());
+    if acting || soon {
         return None;
     }
 
-    let since = now.duration_since(task.acted);
-    let ready = since >= PAUSE && since <= KEEP_LOOKING;
-
-    if !ready {
-        return None;
-    }
-
+    task.looked = now;
     Some(task.clone())
 }
 
@@ -160,8 +171,8 @@ fn current_generation(app: &AppHandle) -> u64 {
         .generation
 }
 
-// Looks at the screen once the person pauses after acting, and lets the
-// cursor know when it settled into something new.
+// Compares the screen with what the agent last saw, and lets the cursor know
+// once it has settled into something new, and where the person clicked.
 fn follow(app: AppHandle) {
     loop {
         thread::sleep(TICK);
@@ -204,6 +215,8 @@ fn follow(app: AppHandle) {
         task.baseline = Some(picture.clone());
         drop(watch);
 
+        let frame = picture.frame;
+
         if !publish(&app, picture, generation) {
             continue;
         }
@@ -215,14 +228,23 @@ fn follow(app: AppHandle) {
 
         // Focus goes back to whichever app the person is working in now.
         *app.state::<FrontApp>().0.lock().expect("front lock") = Some(front);
-        journal::event("watch: the screen changed");
+
+        // The click they made meanwhile counts when it was on the window.
+        let clicked =
+            app.state::<Clicked>().0.lock().expect("click lock").take();
+        let click = clicked.and_then(|(x, y)| frame.fraction(x, y));
+
+        journal::event(&format!(
+            "watch: the screen changed, click {}",
+            click.is_some()
+        ));
 
         // The cursor may have been put away while the person took a moment.
         if let Some(cursor) = app.get_webview_window("cursor") {
             let _ = cursor.show();
         }
 
-        let _ = app.emit_to("cursor", "changed", ());
+        let _ = app.emit_to("cursor", "changed", Changed { click });
     }
 }
 
