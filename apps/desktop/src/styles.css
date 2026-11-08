@@ -67,7 +67,7 @@ body,
 
 .gliding,
 .gliding .glide-y {
-  transition: transform 750ms cubic-bezier(0.3, 0.8, 0.3, 1);
+  transition: transform 420ms cubic-bezier(0.3, 0.8, 0.3, 1);
 }
 
 .gliding .glide-y {
@@ -75,7 +75,7 @@ body,
 }
 
 .anchor.gliding {
-  transition: transform 1100ms cubic-bezier(0.34, 1.4, 0.5, 1);
+  transition: transform 520ms cubic-bezier(0.34, 1.4, 0.5, 1);
 }
 
 .mirror {
@@ -104,7 +104,7 @@ body,
   background: #2563ebeb;
   box-shadow: 0 3px 12px var(--shadow);
   transition: opacity 180ms ease;
-  animation: appear 320ms cubic-bezier(0.34, 1.56, 0.64, 1) backwards;
+  animation: appear 220ms cubic-bezier(0.34, 1.56, 0.64, 1) backwards;
 }
 
 .bubble.measuring {
