@@ -27,6 +27,7 @@ export type Plan = {
   task: string;
   requirements: string[];
   steps: { instruction: string; done: boolean }[];
+  say?: string;
   remaining: number;
 };
 
@@ -36,6 +37,7 @@ export type Pointed = Spot & { step: number | null };
 type Pointer = Pointed & { say: string };
 
 type Listeners = {
+  onPreview: (spot: Spot) => void;
   onPoint: (spot: Pointed) => void;
   onText: (text: string) => void;
   onPlan: (plan: Plan) => void;
@@ -69,6 +71,18 @@ export function plain(text: string) {
     .replace(/\*\*|__|`/g, "")
     .replace(/^#+\s*/gm, "")
     .replace(/^\s*[-*]\s+/gm, "");
+}
+
+// Reads the spot out of a tool call still being written, once both of its
+// numbers are complete, which the comma after each one shows.
+function early(written: string): Spot | undefined {
+  const match = /"x"\s*:\s*([\d.]+)\s*,\s*"y"\s*:\s*([\d.]+)\s*,/.exec(written);
+
+  if (!match) return undefined;
+
+  const [x, y] = [Number(match[1]), Number(match[2])];
+
+  return x <= 1 && y <= 1 ? { x, y } : undefined;
 }
 
 // Puts the message and the picture of the window together, naming the app
@@ -154,7 +168,7 @@ async function send(
 export async function ask(
   message: string,
   picture: Picture | null,
-  { onPoint, onText, onPlan, onRestart }: Listeners,
+  { onPreview, onPoint, onText, onPlan, onRestart }: Listeners,
   fresh = false,
 ) {
   const sent = send(message, picture, onRestart, fresh);
@@ -164,6 +178,8 @@ export async function ask(
   const delivery = await sent;
   const tools = new Map<string, string>();
   const texts = new Set<string>();
+  const inputs = new Map<string, string>();
+  let previewed = false;
   let text = "";
 
   // Shows whatever was said last, since a step that also calls a tool marks
@@ -193,6 +209,27 @@ export async function ask(
         break;
       }
 
+      // The model writes the spot before the words, so the cursor can set
+      // off as soon as both numbers have arrived.
+      case "call.input": {
+        const { callId, name, delta } = event.data;
+
+        if (name) tools.set(callId, name);
+
+        const written = (inputs.get(callId) ?? "") + delta;
+
+        inputs.set(callId, written);
+
+        const spot = tools.get(callId) === "point_at" && early(written);
+
+        if (spot && !previewed) {
+          previewed = true;
+          onPreview(spot);
+        }
+
+        break;
+      }
+
       case "call.requested": {
         tools.set(event.data.callId, event.data.capability.name);
         break;
@@ -210,7 +247,12 @@ export async function ask(
           if (words) say(words);
         }
 
-        if (tools.get(callId) === "plan") onPlan(output as Plan);
+        if (tools.get(callId) === "plan") {
+          const planned = output as Plan;
+
+          onPlan(planned);
+          if (planned.say) say(planned.say);
+        }
 
         break;
       }

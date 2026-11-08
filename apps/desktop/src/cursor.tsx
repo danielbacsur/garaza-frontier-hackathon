@@ -237,6 +237,12 @@ export function Cursor() {
     // fade, watching for one more change right after it pointed somewhere.
     function settle(reply: string, automatic: boolean, pointed: boolean) {
       if (isPlanned()) {
+        // A plan that arrived on its own gets its first pointer at once.
+        if (!pointed && !reply && !automatic) {
+          void run(AUTOMATIC, true);
+          return;
+        }
+
         if (!reply) setSpeech(said.current);
 
         void invoke("watch", { on: true });
@@ -295,6 +301,15 @@ export function Cursor() {
           text,
           picture,
           {
+            // The spot arrives before the words, so the cursor sets off at
+            // once and the full call only confirms it.
+            onPreview: ({ x, y }) => {
+              if (!isCurrent()) return;
+
+              pointed = true;
+              void invoke("point", { x, y, generation });
+            },
+
             onPoint: async ({ x, y, step }) => {
               if (!isCurrent()) return;
 
