@@ -1,0 +1,15 @@
+{
+  "app" : "Google Sheets",
+  "clicks" : 15,
+  "coverage" : 0.33900000000000002,
+  "durationSec" : 50.399999999999999,
+  "gif" : "\/heatmaps\/sheets-pivot.gif",
+  "height" : 624,
+  "poster" : "\/heatmaps\/sheets-pivot.png",
+  "recordedAt" : "2026-11-08T11:41:53Z",
+  "recordedBy" : "Farkas Bence",
+  "slug" : "sheets-pivot",
+  "title" : "Pivot table of invoices by customer",
+  "travel" : 7580,
+  "width" : 960
+}

@@ -1,0 +1,15 @@
+{
+  "app" : "GitHub",
+  "clicks" : 8,
+  "coverage" : 0.125,
+  "durationSec" : 32.5,
+  "gif" : "\/heatmaps\/github-repo.gif",
+  "height" : 624,
+  "poster" : "\/heatmaps\/github-repo.png",
+  "recordedAt" : "2026-11-08T11:43:09Z",
+  "recordedBy" : "Nagy Balázs",
+  "slug" : "github-repo",
+  "title" : "Create a private repository",
+  "travel" : 2654,
+  "width" : 960
+}
